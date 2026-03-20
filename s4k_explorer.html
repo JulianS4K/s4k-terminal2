@@ -968,6 +968,8 @@ async function startApp(){
     setSt('Load error: ' + e.message);
     console.error('[startApp]', e);
   }
+  // Pre-fetch stored standings in background so Intel tab is instant
+  try{ loadIntelLeague(); } catch(e){}
 }
 
 function setSt(s){
@@ -1133,40 +1135,77 @@ function refreshIntelSection(){ switchIntelSection(_intelSection, document.getEl
 
 // Intel → League: reuse loadESPNLeagueDeep but target intel divs
 async function loadIntelLeague(){
-  const conf   = ESPN_DEEP[_leagueDeep];
-  const stEl   = document.getElementById('intel-espnl-status');
-  const content= document.getElementById('intel-espnl-content');
-  const confBar= document.getElementById('intel-espnl-conf-bar');
-  if(stEl) stEl.textContent = 'Loading…';
-  if(content) content.innerHTML = '<div class="loading"><div class="spinner"></div>Fetching…</div>';
+  const conf    = ESPN_DEEP[_leagueDeep];
+  const stEl    = document.getElementById('intel-espnl-status');
+  const content = document.getElementById('intel-espnl-content');
+  const confBar = document.getElementById('intel-espnl-conf-bar');
+  if(!conf) return;
+
+  const trackedTeamMap = {};
+  Object.values(evIndex).forEach(ev=>{
+    const p=ev.home_performer||ev.performer||'';
+    if(!trackedTeamMap[p]) trackedTeamMap[p]=[];
+    trackedTeamMap[p].push(ev);
+  });
+
+  // ── Step 1: Load stored standings from Firestore via GAS (instant) ──
+  // This shows immediately so the tab is never blank
+  if(stEl) stEl.textContent='Loading stored standings…';
+  if(content) content.innerHTML='<div class="loading"><div class="spinner"></div>Loading…</div>';
+  try{
+    const stored = await gasGet({action:'getLeagueStandings', league:_leagueDeep});
+    const storedRows = stored?.ok && stored.standings?.length ? stored.standings : [];
+    if(storedRows.length){
+      // Build conf bar from stored data
+      const confs = [...new Set(storedRows.map(r=>r.conf||'').filter(Boolean))];
+      if(confBar && confs.length){
+        confBar.innerHTML = ['All',...confs].map((cn,i)=>
+          '<button class="ltab '+((!_leagueConf&&i===0)||_leagueConf===cn?'active':'')+
+          '" data-cn="'+cn+'" onclick="filterLeagueConf(this.dataset.cn,this)">'+cn+'</button>').join('');
+      }
+      const html2 = buildDeepStandingsTable(storedRows, _leagueConf, trackedTeamMap, true);
+      if(content) content.innerHTML = html2;
+      if(stEl) stEl.textContent = conf.label+' · '+storedRows.length+' teams · stored · refreshing…';
+    } else {
+      if(content) content.innerHTML='<div style="color:var(--muted);font-size:12px;padding:12px 0;">'
+        +'No stored standings yet — fetching live from ESPN…<br>'
+        +'<span style="font-size:11px;color:var(--muted);">Tip: run <code>teamStandingsTrigger()</code> in GAS once to populate stored data.</span>'
+        +'</div>';
+    }
+  }catch(e){
+    if(content) content.innerHTML='<div style="color:var(--muted);font-size:12px;">GAS unavailable, fetching live…</div>';
+  }
+
+  // ── Step 2: Fetch live from ESPN, update in place ─────────────
   try{
     const [standRes, schedRes] = await Promise.all([
-      fetch(`https://site.api.espn.com/apis/site/v2/sports/${conf.sport}/${conf.league}/standings`).then(r=>r.json()).catch(()=>({})),
-      fetch(`https://site.api.espn.com/apis/site/v2/sports/${conf.sport}/${conf.league}/scoreboard`).then(r=>r.json()).catch(()=>({}))
+      fetch('https://site.api.espn.com/apis/site/v2/sports/'+conf.sport+'/'+conf.league+'/standings')
+        .then(r=>r.json()).catch(()=>({})),
+      fetch('https://site.api.espn.com/apis/site/v2/sports/'+conf.sport+'/'+conf.league+'/scoreboard')
+        .then(r=>r.json()).catch(()=>({}))
     ]);
-    const groups    = standRes.children||[];
-    const confNames = groups.map(g=>g.name||g.abbreviation||'').filter(Boolean);
-    if(confBar){
-      confBar.innerHTML = ['All',...confNames].map((cn,i)=>
-        `<button class="ltab ${!_leagueConf&&i===0||_leagueConf===cn?'active':''}"
-          onclick="filterLeagueConf('${cn}',this)">${cn}</button>`).join('');
-    }
     const games    = schedRes.events||[];
     const allTeams = buildTeamsFromESPN(standRes);
-    const trackedTeamMap = {};
-    Object.values(evIndex).forEach(ev=>{
-      const p=ev.home_performer||ev.performer||'';
-      if(!trackedTeamMap[p]) trackedTeamMap[p]=[];
-      trackedTeamMap[p].push(ev);
-    });
-    let html2='';
-    if(games.length) html2 += buildGamesRow(games);
-    html2 += buildDeepStandingsTable(allTeams, _leagueConf, trackedTeamMap, false);
-    if(stEl) stEl.textContent = conf.label+' · '+allTeams.length+' teams · '+games.length+' games';
-    if(content) content.innerHTML = html2;
+    if(allTeams.length){
+      // Rebuild conf bar from live data
+      const confs = [...new Set(allTeams.map(t=>t.conf||'').filter(Boolean))];
+      if(confBar && confs.length){
+        confBar.innerHTML = ['All',...confs].map((cn,i)=>
+          '<button class="ltab '+((!_leagueConf&&i===0)||_leagueConf===cn?'active':'')+
+          '" data-cn="'+cn+'" onclick="filterLeagueConf(this.dataset.cn,this)">'+cn+'</button>').join('');
+      }
+      let html3='';
+      if(games.length) html3 += buildGamesRow(games);
+      html3 += buildDeepStandingsTable(allTeams, _leagueConf, trackedTeamMap, false);
+      if(content) content.innerHTML = html3;
+      if(stEl) stEl.textContent = conf.label+' · '+allTeams.length+' teams · '+games.length+' games · live';
+    } else {
+      if(stEl) stEl.textContent += ' (ESPN unavailable)';
+    }
   }catch(e){
-    if(stEl) stEl.textContent='Error: '+e.message;
-    if(content) content.innerHTML='<div style="color:var(--red);font-size:12px;">'+e.message+'</div>';
+    // Stored data already shown — just note ESPN fetch failed
+    if(stEl) stEl.textContent = (stEl.textContent||'') + ' · live fetch failed';
+    console.warn('[loadIntelLeague] ESPN live fetch failed:', e.message);
   }
 }
 
@@ -1498,9 +1537,9 @@ async function renderNewsFeeds(){
     }
     // Apply active feed filters
     const filtered = items.filter(i=>{
-      if(!_feedFilters.has('High')   && i.impact==='High')   return false;
-      if(!_feedFilters.has('Medium') && i.impact==='Medium') return false;
-      if(!_feedFilters.has('Low')    && (i.impact==='Low'||!i.impact)) return false;
+      if(!feedFilters.has('High')   && i.impact==='High')   return false;
+      if(!feedFilters.has('Medium') && i.impact==='Medium') return false;
+      if(!feedFilters.has('Low')    && (i.impact==='Low'||!i.impact)) return false;
       return true;
     });
     if(cntEl) cntEl.textContent=filtered.length+' items';
