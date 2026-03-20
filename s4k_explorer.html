@@ -866,7 +866,7 @@ async function saveSetup(){
   // Strip trailing slashes / spaces
   url = url.replace(/\/+$/, '').trim();
   if(!url.includes('script.google.com')){
-    setupErr('That doesn't look like a GAS URL. It should contain script.google.com');
+    setupErr("That doesn't look like a GAS URL. It should contain script.google.com");
     return;
   }
 
@@ -905,8 +905,7 @@ async function saveSetup(){
     setupStep(2,'done', 'Firestore token OK · project: ' + td.project_id);
   } catch(e){
     setupStep(2,'fail', 'Token failed: ' + e.message);
-    setupErr('Firestore token error: ' + e.message + '
-Check FIREBASE_PROJECT_ID and FIREBASE_CLIENT_EMAIL in Script Properties.');
+    setupErr('Firestore token error: ' + e.message + ' — Check FIREBASE_PROJECT_ID and FIREBASE_CLIENT_EMAIL in Script Properties.');
     return;
   }
 
@@ -3336,11 +3335,14 @@ function renderGroupsPanel(){
     const ss = g.series_stats||{};
     const typeLabel = {playoff_series:'🏆 Playoff',baseball_series:'⚾ Series',custom:'📂 Custom',rivalry:'⚔️ Rivalry'}[g.type]||g.type;
     return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:8px;">
+      const _nbBtn = g.notebook_url
+        ? '<a href="' + (g.notebook_url||'#') + '" target="_blank" style="font-size:10px;color:var(--blue);margin-left:auto;text-decoration:none;">&#128211; Notebook &rarr;</a>'
+        : '<button class="btn" style="font-size:10px;padding:2px 7px;margin-left:auto;" data-gid="' + g.group_id + '" onclick="createGroupNB(this.dataset.gid)">+ Notebook</button>';
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
         <span style="font-size:12px;font-weight:600;color:var(--white);">${g.name}</span>
         <span style="font-size:10px;color:var(--muted);background:var(--bg3);padding:1px 6px;border-radius:3px;">${typeLabel}</span>
         <span style="font-size:10px;color:var(--muted);">${(g.events||[]).length} games</span>
-        ${g.notebook_url?`<a href="${g.notebook_url}" target="_blank" style="font-size:10px;color:var(--blue);margin-left:auto;text-decoration:none;">📓 Notebook →</a>`:'<button class="btn" style="font-size:10px;padding:2px 7px;margin-left:auto;" onclick="createGroupNB(''+g.group_id+'')">+ Notebook</button>'}
+        ${_nbBtn}
       </div>
       <div style="display:flex;gap:14px;font-size:11px;font-family:var(--mono);margin-bottom:8px;">
         ${ps.floor_min?`<span style="color:var(--muted);">Floor <span style="color:var(--teal);">${fmt(ps.floor_min)}–${fmt(ps.floor_max)}</span></span>`:''}
