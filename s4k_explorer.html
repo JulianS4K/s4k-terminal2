@@ -244,6 +244,13 @@ body{background:var(--bg);color:var(--white);font-family:var(--font);font-size:1
 
         <!-- SCATTER TAB -->
         <div id="tab-scatter" style="display:none;">
+          <div style="display:flex;gap:6px;margin-bottom:10px;align-items:center;">
+            <span style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">View</span>
+            <button class="ltab active" id="scat-ctx-event"    onclick="selectAggContext('event')">This Event</button>
+            <button class="ltab"        id="scat-ctx-performer" onclick="selectAggContext('performer')">By Performer</button>
+            <button class="ltab"        id="scat-ctx-venue"     onclick="selectAggContext('venue')">By Venue</button>
+            <span id="scat-ctx-label" style="font-size:11px;color:var(--muted);margin-left:6px;"></span>
+          </div>
           <div class="scatter-controls">
             <label>X axis</label>
             <select id="scatter-x" onchange="renderScatter()">
@@ -308,6 +315,13 @@ body{background:var(--bg);color:var(--white);font-family:var(--font);font-size:1
 
         <!-- SNAPSHOTS TAB -->
         <div id="tab-snapshots" style="display:none;">
+          <div style="display:flex;gap:6px;margin-bottom:10px;align-items:center;flex-wrap:wrap;">
+            <span style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">View</span>
+            <button class="ltab active" id="snap-ctx-event"    onclick="selectAggContext('event')">This Event</button>
+            <button class="ltab"        id="snap-ctx-performer" onclick="selectAggContext('performer')">By Performer</button>
+            <button class="ltab"        id="snap-ctx-venue"     onclick="selectAggContext('venue')">By Venue</button>
+            <span id="snap-ctx-label" style="font-size:11px;color:var(--muted);margin-left:6px;"></span>
+          </div>
           <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;">
             <span style="font-size:11px;color:var(--text2);">Type:</span>
             <select id="snap-type-filter" onchange="renderSnapshotTable()" style="padding:4px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--white);font-size:11px;">
@@ -985,36 +999,54 @@ function toggleSbSection(id, headerEl){
 function renderPerfTree(){
   const el = document.getElementById('perf-tree');
   if(!el) return;
-  // Group evIndex by home_performer
   const byPerf = {};
   Object.values(evIndex).forEach(ev=>{
-    const key  = ev.home_performer || ev.performer || 'Unknown';
-    const pid  = ev.home_performer_id || ev.performer_id || key;
-    if(!byPerf[pid]) byPerf[pid]={name:key, id:pid, events:[]};
+    const key = ev.home_performer||ev.performer||'Unknown';
+    const pid = ev.home_performer_id||ev.performer_id||key;
+    if(!byPerf[pid]) byPerf[pid]={name:key,id:pid,events:[]};
     byPerf[pid].events.push(ev);
   });
   const sorted = Object.values(byPerf).sort((a,b)=>a.name.localeCompare(b.name));
   if(!sorted.length){el.innerHTML='<div style="padding:8px 12px;font-size:11px;color:var(--muted);">No events tracked</div>';return;}
   el.innerHTML = sorted.map(p=>{
-    const evsSorted = p.events.sort((a,b)=>new Date(a.occurs_at_local||a.event_date||0)-new Date(b.occurs_at_local||b.event_date||0));
-    return`<div class="perf-group">
-      <div class="perf-header" onclick="togglePerfGroup('pg-${p.id}',this)">
-        <span style="font-size:11px;font-weight:600;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.name}</span>
-        <span style="font-size:10px;color:var(--muted);flex-shrink:0;">${p.events.length} ▸</span>
-      </div>
-      <div id="pg-${p.id}" style="display:none;">
-        ${evsSorted.map(ev=>{
-          const active = ev.event_id==selEventId?' style="background:rgba(76,110,245,0.15);"':'';
-          const floor  = ev.tevo_floor?'$'+Number(ev.tevo_floor).toFixed(0):'—';
-          const date   = ev.occurs_at_local?(new Date(ev.occurs_at_local)).toLocaleDateString('en-US',{month:'short',day:'numeric'}):ev.event_date?.substring(5,10)||'';
-          return`<div class="ev-item"${active} onclick="selectEvent('${ev.event_id}')" style="padding-left:18px;">
-            <div class="ev-name" style="font-size:11px;">${ev.event_name||ev.name||ev.event_id}</div>
-            <div class="ev-meta">${date} · <span class="ev-price">${floor}</span></div>
-          </div>`;
-        }).join('')}
-      </div>
-    </div>`;
+    const evs    = p.events;
+    const floors = evs.map(e=>Number(e.tevo_floor||0)).filter(v=>v>0);
+    const flMin  = floors.length?Math.min(...floors):0;
+    const flMax  = floors.length?Math.max(...floors):0;
+    const flAvg  = floors.length?Math.round(floors.reduce((a,b)=>a+b,0)/floors.length):0;
+    const hasSel = evs.some(e=>e.event_id==selEventId);
+    const next   = evs.filter(e=>new Date(e.occurs_at_local||e.event_date||0)>=new Date())
+                      .sort((a,b)=>new Date(a.occurs_at_local||a.event_date||0)-new Date(b.occurs_at_local||b.event_date||0))[0];
+    const nextStr= next?(new Date(next.occurs_at_local||next.event_date)).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
+    return '<div class="perf-group">'
+      +'<div class="perf-header" data-pid="'+p.id+'" onclick="showPerfAggregate(this.dataset.pid,this)" style="'+(hasSel?'background:rgba(76,110,245,0.1);':'')+'">'
+      +'<div style="min-width:0;flex:1;">'
+      +'<div style="font-size:12px;font-weight:600;color:'+(hasSel?'var(--white)':'var(--text2)')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+p.name+'</div>'
+      +'<div style="font-size:10px;color:var(--muted);margin-top:2px;">'+evs.length+' games · next '+nextStr+'</div>'
+      +'</div>'
+      +'<div style="text-align:right;flex-shrink:0;margin-left:8px;">'
+      +(flAvg?'<div style="font-family:var(--mono);font-size:11px;color:var(--teal);">$'+flAvg+'</div>':'')
+      +(flMin&&flMax&&flMin!==flMax?'<div style="font-size:9px;color:var(--muted);">$'+flMin+'–$'+flMax+'</div>':'')
+      +'</div>'
+      +'</div>'
+      +'</div>';
   }).join('');
+}
+
+function showPerfAggregate(perfId, headerEl){
+  // Select the most recent tracked event for this performer as context
+  const evs = Object.values(evIndex)
+    .filter(e=>(e.home_performer_id||e.performer_id)==perfId)
+    .sort((a,b)=>new Date(a.occurs_at_local||a.event_date||0)-new Date(b.occurs_at_local||b.event_date||0));
+  if(!evs.length) return;
+  // Find next upcoming or most recent
+  const now = new Date();
+  const next = evs.find(e=>new Date(e.occurs_at_local||e.event_date||0)>=now)||evs[evs.length-1];
+  if(next) selectEvent(next.event_id);
+  // Show scatter in performer aggregate mode
+  showTab('scatter', document.getElementById('ntab-scatter'));
+  document.querySelectorAll('.nav-tab').forEach(b=>b.classList.toggle('active', b.id==='ntab-scatter'));
+  setTimeout(()=>selectAggContext('performer', perfId), 100);
 }
 
 function togglePerfGroup(id, headerEl){
@@ -1032,35 +1064,49 @@ function renderVenueTree(){
   if(!el) return;
   const byVenue = {};
   Object.values(evIndex).forEach(ev=>{
-    const key = ev.venue || 'Unknown Venue';
-    const vid = ev.venue_id || key;
-    if(!byVenue[vid]) byVenue[vid]={name:key, id:vid, city:ev.venue_city||'', events:[]};
+    const key = ev.venue||'Unknown Venue';
+    const vid = ev.venue_id||key;
+    if(!byVenue[vid]) byVenue[vid]={name:key,id:vid,city:ev.venue_city||'',events:[]};
     byVenue[vid].events.push(ev);
   });
   const sorted = Object.values(byVenue).sort((a,b)=>a.name.localeCompare(b.name));
   if(!sorted.length){el.innerHTML='<div style="padding:8px 12px;font-size:11px;color:var(--muted);">No events tracked</div>';return;}
   el.innerHTML = sorted.map(v=>{
-    const evsSorted = v.events.sort((a,b)=>new Date(a.occurs_at_local||a.event_date||0)-new Date(b.occurs_at_local||b.event_date||0));
-    return`<div class="perf-group">
-      <div class="perf-header" onclick="togglePerfGroup('vg-${v.id}',this)">
-        <span style="font-size:11px;font-weight:600;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${v.name}${v.city?' · <span style=\"color:var(--muted);\">'+ v.city+'</span>':''}</span>
-        <span style="font-size:10px;color:var(--muted);flex-shrink:0;">${v.events.length} ▸</span>
-      </div>
-      <div id="vg-${v.id}" style="display:none;">
-        ${evsSorted.map(ev=>{
-          const active = ev.event_id==selEventId?' style="background:rgba(76,110,245,0.15);"':'';
-          const floor  = ev.tevo_floor?'$'+Number(ev.tevo_floor).toFixed(0):'—';
-          const date   = ev.occurs_at_local?(new Date(ev.occurs_at_local)).toLocaleDateString('en-US',{month:'short',day:'numeric'}):ev.event_date?.substring(5,10)||'';
-          return`<div class="ev-item"${active} onclick="selectEvent('${ev.event_id}')" style="padding-left:18px;">
-            <div class="ev-name" style="font-size:11px;">${ev.event_name||ev.name||ev.event_id}</div>
-            <div class="ev-meta">${date} · <span class="ev-price">${floor}</span></div>
-          </div>`;
-        }).join('')}
-      </div>
-    </div>`;
+    const evs    = v.events;
+    const floors = evs.map(e=>Number(e.tevo_floor||0)).filter(x=>x>0);
+    const flMin  = floors.length?Math.min(...floors):0;
+    const flMax  = floors.length?Math.max(...floors):0;
+    const flAvg  = floors.length?Math.round(floors.reduce((a,b)=>a+b,0)/floors.length):0;
+    const hasSel = evs.some(e=>e.event_id==selEventId);
+    const perfs  = [...new Set(evs.map(e=>e.home_performer||e.performer||'').filter(Boolean))];
+    const perfStr= perfs.slice(0,2).join(', ')+(perfs.length>2?' +'+( perfs.length-2):'');
+    return '<div class="perf-group">'
+      +'<div class="perf-header" data-vid="'+v.id+'" onclick="showVenueAggregate(this.dataset.vid,this)" style="'+(hasSel?'background:rgba(76,110,245,0.1);':'')+'">'
+      +'<div style="min-width:0;flex:1;">'
+      +'<div style="font-size:12px;font-weight:600;color:'+(hasSel?'var(--white)':'var(--text2)')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+v.name+(v.city?' <span style="color:var(--muted);font-weight:400;">· '+v.city+'</span>':'')+'</div>'
+      +'<div style="font-size:10px;color:var(--muted);margin-top:2px;">'+evs.length+' events · '+perfStr+'</div>'
+      +'</div>'
+      +'<div style="text-align:right;flex-shrink:0;margin-left:8px;">'
+      +(flAvg?'<div style="font-family:var(--mono);font-size:11px;color:var(--teal);">$'+flAvg+'</div>':'')
+      +(flMin&&flMax&&flMin!==flMax?'<div style="font-size:9px;color:var(--muted);">$'+flMin+'–$'+flMax+'</div>':'')
+      +'</div>'
+      +'</div>'
+      +'</div>';
   }).join('');
 }
 
+function showVenueAggregate(venueId, headerEl){
+  const evs = Object.values(evIndex)
+    .filter(e=>e.venue_id==venueId)
+    .sort((a,b)=>new Date(a.occurs_at_local||a.event_date||0)-new Date(b.occurs_at_local||b.event_date||0));
+  if(!evs.length) return;
+  const now  = new Date();
+  const next = evs.find(e=>new Date(e.occurs_at_local||e.event_date||0)>=now)||evs[evs.length-1];
+  if(next) selectEvent(next.event_id);
+  showTab('scatter', document.getElementById('ntab-scatter'));
+  document.querySelectorAll('.nav-tab').forEach(b=>b.classList.toggle('active', b.id==='ntab-scatter'));
+  setTimeout(()=>selectAggContext('venue', venueId), 100);
+}
 // ── INTEL TAB controller ──────────────────────────────────────────
 let _intelSection = 'league';
 
@@ -1162,15 +1208,52 @@ function buildGamesRow(games){
 }
 
 // Intel → Team Stats: proxy to existing ESPN functions, target intel divs
-function loadIntelTeam(){
-  // Mirror espn-team-tabs and espn-content into intel divs
-  const srcTabs    = document.getElementById('espn-team-tabs');
-  const srcContent = document.getElementById('espn-content');
-  const dstTabs    = document.getElementById('intel-espn-team-tabs');
+async function loadIntelTeam(){
   const dstContent = document.getElementById('intel-espn-content');
-  if(srcTabs&&dstTabs)       dstTabs.innerHTML    = srcTabs.innerHTML;
-  if(srcContent&&dstContent) dstContent.innerHTML = srcContent.innerHTML;
-  if(perfIndex?.espn_team_id) fetchESPNLive();
+  if(!dstContent) return;
+  if(!selEventId){ dstContent.innerHTML='<div style="color:var(--muted);font-size:12px;">Select an event to load team stats</div>'; return; }
+  dstContent.innerHTML='<div class="loading"><div class="spinner"></div>Loading team stats…</div>';
+  const ev  = evIndex[selEventId]||{};
+  const pid = ev.home_performer_id||ev.performer_id||'';
+  if(!pid){ dstContent.innerHTML='<div style="color:var(--muted);font-size:12px;">No performer linked to this event</div>'; return; }
+  if(!perfIndex) perfIndex = await FS.getDoc('performer_index',String(pid)).catch(()=>null);
+  if(!perfIndex?.espn_team_id){ dstContent.innerHTML='<div style="color:var(--muted);font-size:12px;">No ESPN ID — link it in Settings → Performers</div>'; return; }
+  try{
+    const sport  = (ev.category||'basketball').split(' ')[0].toLowerCase();
+    const league = ({baseball:'mlb',basketball:'nba',football:'nfl',hockey:'nhl',soccer:'usa.1'}[sport])||'nba';
+    const espId  = perfIndex.espn_team_id;
+    const [teamRes,injRes] = await Promise.all([
+      fetch(`https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/teams/${espId}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/teams/${espId}?enable=injuries`).then(r=>r.json()).catch(()=>({}))
+    ]);
+    const team    = teamRes.team||{};
+    const record  = team.record?.items?.find(r=>r.type==='total')||{};
+    const injuries= injRes.team?.injuries||[];
+    let html2 = '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">';
+    html2 += '<div class="metric-pill"><div class="lbl">Record</div><div class="val" style="font-size:14px;">'+(record.summary||'—')+'</div></div>';
+    html2 += '<div class="metric-pill"><div class="lbl">Standing</div><div class="val" style="font-size:14px;">'+(teamStanding?'#'+teamStanding.standing+' '+teamStanding.conf:'—')+'</div></div>';
+    html2 += '<div class="metric-pill"><div class="lbl">Streak</div><div class="val" style="font-size:14px;">'+(teamStanding?.streak||'—')+'</div></div>';
+    html2 += '<div class="metric-pill"><div class="lbl">Last 10</div><div class="val" style="font-size:14px;">'+(teamStanding?.last_ten||'—')+'</div></div>';
+    html2 += '</div>';
+    if(injuries.length){
+      html2 += '<div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Injury Report ('+injuries.length+')</div>';
+      html2 += injuries.map(inj=>{
+        const p   = inj.athlete||{};
+        const col = inj.status==='Out'?'var(--red)':inj.status==='Questionable'?'var(--yellow)':'var(--text2)';
+        return '<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">'
+          +'<span style="font-size:12px;color:var(--white);font-weight:500;flex:1;">'+(p.displayName||'—')+'</span>'
+          +'<span style="font-size:11px;color:var(--muted);">'+(p.position?.abbreviation||'')+'</span>'
+          +'<span style="font-size:11px;font-weight:700;color:'+col+';">'+(inj.status||'—')+'</span>'
+          +'<span style="font-size:10px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+(inj.details?.detail||inj.shortComment||'')+'</span>'
+          +'</div>';
+      }).join('');
+    } else {
+      html2 += '<div style="font-size:12px;color:var(--green);">No injuries reported</div>';
+    }
+    dstContent.innerHTML = html2;
+  }catch(e){
+    dstContent.innerHTML='<div style="color:var(--red);font-size:12px;">'+e.message+'</div>';
+  }
 }
 
 // Intel → Kalshi: same data as old kalshi tab, new element IDs
@@ -1179,14 +1262,24 @@ async function loadIntelKalshi(){
   const status = document.getElementById('intel-kalshi-status');
   const tbody  = document.getElementById('intel-kalshi-tbody');
   if(status) status.textContent='Loading…';
-  if(tbody)  tbody.innerHTML='<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted);">Loading…</td></tr>';
+  if(tbody)  tbody.innerHTML='<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted);">Fetching…</td></tr>';
   try{
-    const r = await gasGet({action:'getKalshiMarkets', sport_title:sport, limit:'100'});
-    _kalshiAllRows = r.markets||[];
+    const data = await fetch('https://api.elections.kalshi.com/trade-api/v2/markets?status=open&limit=1000').then(r=>r.json());
+    let markets = data.markets||[];
+    if(sport){
+      const q = sport.toLowerCase().replace(/ /g,'');
+      markets = markets.filter(m=>{
+        const mc = (m.category||'').toLowerCase().replace(/ /g,'');
+        const tk = (m.ticker||'').toUpperCase();
+        return mc.includes(q) || tk.includes(sport.replace(/ /g,'').toUpperCase().substring(0,3));
+      });
+    }
+    _kalshiAllRows = markets;
     renderIntelKalshiTable(_kalshiAllRows);
     if(status) status.textContent = _kalshiAllRows.length+' markets';
   }catch(e){
     if(status) status.textContent='Error: '+e.message;
+    if(tbody)  tbody.innerHTML='<tr><td colspan="6" style="padding:16px;color:var(--red);text-align:center;">'+e.message+' — Kalshi may block CORS. Try the VPN or use GAS proxy.</td></tr>';
   }
 }
 
@@ -1343,20 +1436,55 @@ async function loadIntelESPNNews(){
 }
 
 // News → All Feeds (renders feedItems from current event selection, or all recent)
-function renderNewsFeeds(){
+async function renderNewsFeeds(){
   const listEl = document.getElementById('news-feed-list');
   const cntEl  = document.getElementById('news-feed-count');
   if(!listEl) return;
-  // Use same feedItems array as main feed tab
-  if(!feedItems.length){
-    listEl.innerHTML='<div style="color:var(--muted);font-size:12px;padding:12px 0;">No feed items for this event</div>';
-    if(cntEl) cntEl.textContent='';
-    return;
+  listEl.innerHTML='<div class="loading"><div class="spinner"></div>Loading…</div>';
+  try{
+    // Fetch recent feed items — either for selected event or latest 50
+    let items = [];
+    if(selEventId){
+      items = await FS.query('feed_items',
+        [{field:'matched_event_id',op:'EQUAL',value:String(selEventId)}],
+        [{field:'posted_at',dir:'DESCENDING'}],50);
+    }
+    // Also pull unmatched recent items to fill out the feed
+    const recent = await FS.query('feed_items',[],
+      [{field:'received_ts',dir:'DESCENDING'}],50);
+    // Merge, deduplicate by id
+    const seen=new Set(); items.forEach(i=>seen.add(i.id||i._id));
+    (recent||[]).forEach(i=>{ if(!seen.has(i.id||i._id)) items.push(i); });
+    items.sort((a,b)=>new Date(b.posted_at||b.received_ts||0)-new Date(a.posted_at||a.received_ts||0));
+    if(!items.length){
+      listEl.innerHTML='<div style="color:var(--muted);font-size:12px;padding:12px 0;">No feed items yet</div>';
+      if(cntEl) cntEl.textContent=''; return;
+    }
+    // Apply active feed filters
+    const filtered = items.filter(i=>{
+      if(!_feedFilters.has('High')   && i.impact==='High')   return false;
+      if(!_feedFilters.has('Medium') && i.impact==='Medium') return false;
+      if(!_feedFilters.has('Low')    && (i.impact==='Low'||!i.impact)) return false;
+      return true;
+    });
+    if(cntEl) cntEl.textContent=filtered.length+' items';
+    listEl.innerHTML = filtered.map(item=>{
+      const ic  = item.impact==='High'?'var(--red)':item.impact==='Medium'?'var(--yellow)':'var(--muted)';
+      const ago = fmtAgo(item.posted_at||item.received_ts||'');
+      const matched = item.matched_event_id && evIndex[item.matched_event_id];
+      return '<div style="border-bottom:1px solid var(--border);padding:10px 0;">'
+        +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">'
+        +(item.impact?'<span style="font-size:10px;font-weight:700;color:'+ic+';text-transform:uppercase;">'+item.impact+'</span>':'')
+        +(matched?'<span style="font-size:10px;color:var(--blue);background:rgba(76,110,245,0.1);padding:1px 6px;border-radius:3px;cursor:pointer;" onclick="selectEvent(this.dataset.eid)" data-eid="'+item.matched_event_id+'">'+evIndex[item.matched_event_id].event_name+'</span>':'')
+        +'<span style="font-size:10px;color:var(--muted);margin-left:auto;">'+ago+' ago</span>'
+        +'</div>'
+        +'<div style="font-size:12px;color:var(--white);line-height:1.4;">'+( item.post_text||item.title||'—')+'</div>'
+        +(item.post_url?'<a href="'+item.post_url+'" target="_blank" style="font-size:10px;color:var(--muted);">Read →</a>':'')
+        +'</div>';
+    }).join('');
+  }catch(e){
+    listEl.innerHTML='<div style="color:var(--red);font-size:12px;">'+e.message+'</div>';
   }
-  // Mirror renderFeed output
-  const existing=document.getElementById('feed-list');
-  if(existing) listEl.innerHTML=existing.innerHTML;
-  if(cntEl) cntEl.textContent=feedItems.length+' items';
 }
 
 function renderEventList(){
@@ -1667,7 +1795,95 @@ function renderOverlay(){
 }
 
 // ── Scatter ───────────────────────────────────────────────────
+// ── Aggregate context (Performer / Venue timelines) ──────────────
+let _aggContext = 'event';
+let _aggId      = null;   // performer_id or venue_id
+
+function selectAggContext(ctx, id){
+  _aggContext = ctx;
+  if(id) _aggId = id;
+  else if(ctx==='performer') _aggId = (evIndex[selEventId]?.home_performer_id||evIndex[selEventId]?.performer_id||null);
+  else if(ctx==='venue')     _aggId = (evIndex[selEventId]?.venue_id||null);
+  else _aggId = null;
+
+  // Update both context bars
+  ['scat','snap'].forEach(prefix=>{
+    ['event','performer','venue'].forEach(c=>{
+      const btn = document.getElementById(prefix+'-ctx-'+c);
+      if(btn) btn.classList.toggle('active', c===ctx);
+    });
+    const lbl = document.getElementById(prefix+'-ctx-label');
+    if(lbl){
+      if(ctx==='performer'){
+        const p = Object.values(evIndex).find(e=>(e.home_performer_id||e.performer_id)==_aggId);
+        lbl.textContent = p?(p.home_performer||p.performer||_aggId):'';
+      } else if(ctx==='venue'){
+        const v = Object.values(evIndex).find(e=>e.venue_id==_aggId);
+        lbl.textContent = v?(v.venue||_aggId):'';
+      } else { lbl.textContent=''; }
+    }
+  });
+
+  renderScatter();
+  renderSnapshotTable();
+}
+
+// Build aggregate dataset: one point per event (floor avg vs date)
+function buildAggScatterData(){
+  let evs = [];
+  if(_aggContext==='performer' && _aggId){
+    evs = Object.values(evIndex).filter(e=>(e.home_performer_id||e.performer_id)==_aggId);
+  } else if(_aggContext==='venue' && _aggId){
+    evs = Object.values(evIndex).filter(e=>e.venue_id==_aggId);
+  }
+  if(!evs.length) return null;
+
+  evs.sort((a,b)=>new Date(a.event_date||a.occurs_at_local||0)-new Date(b.event_date||b.occurs_at_local||0));
+
+  const tePoints = evs.filter(e=>e.tevo_floor>0).map(e=>({
+    x: new Date(e.event_date||e.occurs_at_local).getTime(),
+    y: Number(e.tevo_floor),
+    label: e.event_name||e.performer||'',
+    event_id: e.event_id
+  }));
+  const sgPoints = evs.filter(e=>e.sg_floor>0).map(e=>({
+    x: new Date(e.event_date||e.occurs_at_local).getTime(),
+    y: Number(e.sg_floor),
+    label: e.event_name||e.performer||''
+  }));
+
+  return {tePoints, sgPoints,
+    xLabel: 'Event Date',
+    yLabel: 'Floor Price ($)',
+    title: _aggContext==='performer'
+      ? 'Floor by Game — ' + (Object.values(evIndex).find(e=>(e.home_performer_id||e.performer_id)==_aggId)?.home_performer||_aggId)
+      : 'Floor by Event — ' + (Object.values(evIndex).find(e=>e.venue_id==_aggId)?.venue||_aggId)
+  };
+}
+
+function buildAggSnapshotRows(){
+  let evs = [];
+  if(_aggContext==='performer' && _aggId){
+    evs = Object.values(evIndex).filter(e=>(e.home_performer_id||e.performer_id)==_aggId);
+  } else if(_aggContext==='venue' && _aggId){
+    evs = Object.values(evIndex).filter(e=>e.venue_id==_aggId);
+  }
+  if(!evs.length) return null;
+  evs.sort((a,b)=>new Date(a.event_date||a.occurs_at_local||0)-new Date(b.event_date||b.occurs_at_local||0));
+  return evs.map(e=>({
+    snapshot_ts:  e.event_date||e.occurs_at_local||'',
+    event_name:   e.event_name||e.performer||'',
+    event_id:     e.event_id,
+    tevo_floor:   e.tevo_floor||0,   tevo_avg:  e.tevo_avg||0,
+    tevo_count:   e.tevo_count||0,   sg_floor:  e.sg_floor||0,
+    sg_avg:       e.sg_avg||0,       sg_count:  e.sg_count||0,
+    spread:       (e.tevo_floor&&e.sg_floor)?Math.round(e.tevo_floor-e.sg_floor):null,
+    type:         'aggregate'
+  }));
+}
+
 function renderScatter(){
+  if(_aggContext!=='event' && _aggId){ renderAggScatter(); return; }
   const xField=document.getElementById('scatter-x')?.value||'days_until';
   const yField=document.getElementById('scatter-y')?.value||'te_floor';
   const colorBy=document.getElementById('scatter-color')?.value||'time';
@@ -2306,6 +2522,7 @@ async function fetchESPNLive(){ await fetchESPNForEvent(); }
 
 // ── Snapshots Table ───────────────────────────────────────────
 function renderSnapshotTable(){
+  if(_aggContext!=='event' && _aggId){ renderAggSnapshotTable(); return; }
   const filter=document.getElementById('snap-type-filter')?.value||'all';
   const thead=document.getElementById('snap-thead');
   const tbody=document.getElementById('snap-tbody');
@@ -3166,7 +3383,7 @@ let _autoRefreshActive = false;
 let _autoRefreshSecs   = 300; // 5 min
 let _autoRefreshCount  = 300;
 
-function startAutoRefresh(){
+async function startAutoRefresh(){
   if(_autoRefreshTimer) clearInterval(_autoRefreshTimer);
   _autoRefreshActive = true;
   _autoRefreshCount  = _autoRefreshSecs;
@@ -3323,18 +3540,26 @@ async function loadLiveStats(){
 }
 
 // ── Groups Panel ─────────────────────────────────────────────────
-function renderGroupsPanel(){
+async function renderGroupsPanel(){
   const list = document.getElementById('groups-list');
   if(!list) return;
-  if(!evGroups||!evGroups.length){
-    list.innerHTML='<div style="color:var(--muted);font-size:12px;padding:12px 0;">No groups for this event</div>';
-    return;
-  }
-  list.innerHTML = evGroups.map(g=>{
+  list.innerHTML='<div class="loading"><div class="spinner"></div>Loading groups…</div>';
+  try{
+    // Load ALL groups from Firestore, not just the selected event
+    const r = await gasGet({action:'getEventGroups'});
+    const allGroups = r.groups||[];
+    if(!allGroups.length){
+      list.innerHTML='<div style="color:var(--muted);font-size:12px;padding:12px 0;">No event groups yet — create one in Settings or track a playoff series</div>';
+      return;
+    }
+    // Highlight groups containing selected event
+    const activeGroupIds = new Set((evGroups||[]).map(g=>g.group_id));
+    list.innerHTML = allGroups.map(g=>{
+    const isActive = activeGroupIds.has(g.group_id);
     const ps = g.price_summary||{};
     const ss = g.series_stats||{};
     const typeLabel = {playoff_series:'🏆 Playoff',baseball_series:'⚾ Series',custom:'📂 Custom',rivalry:'⚔️ Rivalry'}[g.type]||g.type;
-    return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:8px;">
+    return`<div style="background:var(--bg2);border:1px solid ${isActive?'rgba(76,110,245,0.4)':'var(--border)'};border-radius:6px;padding:10px 12px;margin-bottom:8px;${isActive?'box-shadow:0 0 0 1px rgba(76,110,245,0.2);':''}">
       const _nbBtn = g.notebook_url
         ? '<a href="' + (g.notebook_url||'#') + '" target="_blank" style="font-size:10px;color:var(--blue);margin-left:auto;text-decoration:none;">&#128211; Notebook &rarr;</a>'
         : '<button class="btn" style="font-size:10px;padding:2px 7px;margin-left:auto;" data-gid="' + g.group_id + '" onclick="createGroupNB(this.dataset.gid)">+ Notebook</button>';
@@ -3366,6 +3591,9 @@ function renderGroupsPanel(){
       </div>
     </div>`;
   }).join('');
+  }catch(e){
+    list.innerHTML='<div style="color:var(--red);font-size:12px;">Failed to load groups: '+e.message+'</div>';
+  }
 }
 
 async function createGroupNB(groupId){
@@ -3885,6 +4113,75 @@ function fmtAgo(ts){
   if(diff<86400000) return Math.round(diff/3600000)+'h';
   return Math.round(diff/86400000)+'d';
 }
+
+// ── Aggregate scatter — one point per event ───────────────────────
+function renderAggScatter(){
+  const agg = buildAggScatterData();
+  const cv  = document.getElementById('scatter-chart');
+  if(!cv) return;
+  // Remove any previous "no data" message
+  cv.nextElementSibling?.tagName==='DIV' && cv.nextElementSibling.remove();
+  if(!agg||!agg.tePoints.length){
+    cv.style.display='none';
+    cv.insertAdjacentHTML('afterend','<div style="color:var(--muted);font-size:12px;padding:16px 0;">No floor data for this '+_aggContext+'</div>');
+    return;
+  }
+  cv.style.display='';
+  if(window._scatterChart){ window._scatterChart.destroy(); window._scatterChart=null; }
+  window._scatterChart = new Chart(cv.getContext('2d'),{
+    type:'scatter',
+    data:{datasets:[
+      {label:'TEvo Floor',data:agg.tePoints,backgroundColor:'rgba(76,110,245,0.75)',pointRadius:6,pointHoverRadius:9},
+      ...(agg.sgPoints.length?[{label:'SG Floor',data:agg.sgPoints,backgroundColor:'rgba(0,200,150,0.7)',pointRadius:5,pointHoverRadius:7}]:[])
+    ]},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{
+        legend:{labels:{color:'#aaa',font:{size:11}}},
+        title:{display:!!agg.title,text:agg.title,color:'#ccc',font:{size:12}},
+        tooltip:{callbacks:{label:c=>{const p=c.raw;return[p.label,'$'+p.y.toFixed(0)];}}}
+      },
+      scales:{
+        x:{type:'time',time:{unit:'month'},ticks:{color:'#666'},grid:{color:'rgba(255,255,255,0.04)'}},
+        y:{ticks:{color:'#888',callback:v=>'$'+v},grid:{color:'rgba(255,255,255,0.06)'}}
+      },
+      onClick:(e,els)=>{
+        if(els.length){
+          const d=els[0].datasetIndex===0?agg.tePoints[els[0].index]:agg.sgPoints[els[0].index];
+          if(d?.event_id) selectEvent(d.event_id);
+        }
+      }
+    }
+  });
+}
+
+// ── Aggregate snapshot table — one row per event ──────────────────
+function renderAggSnapshotTable(){
+  const rows = buildAggSnapshotRows();
+  const el   = document.getElementById('snap-table-body');
+  if(!el) return;
+  if(!rows||!rows.length){
+    el.innerHTML='<tr><td colspan="8" style="padding:20px;color:var(--muted);text-align:center;">No data for this '+_aggContext+'</td></tr>';
+    return;
+  }
+  el.innerHTML = rows.map(row=>{
+    const dt  = row.snapshot_ts?new Date(row.snapshot_ts).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'}):'—';
+    const sp  = row.spread!=null?(row.spread>=0?'+':'')+'$'+row.spread:'—';
+    const sc  = row.spread>5?'var(--red)':row.spread<-5?'var(--green)':'var(--text2)';
+    const act = row.event_id==selEventId?'background:rgba(76,110,245,0.1);':'';
+    return '<tr style="cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.03);'+act+'" onclick="selectEvent(this.dataset.eid)" data-eid="'+row.event_id+'">'
+      +'<td style="padding:5px 8px;">'+dt+'</td>'
+      +'<td style="padding:5px 8px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+row.event_name+'</td>'
+      +'<td style="padding:5px 8px;color:var(--teal);">'+(row.tevo_floor?'$'+row.tevo_floor:'—')+'</td>'
+      +'<td style="padding:5px 8px;">'+(row.tevo_avg?'$'+row.tevo_avg:'—')+'</td>'
+      +'<td style="padding:5px 8px;">'+(row.tevo_count||'—')+'</td>'
+      +'<td style="padding:5px 8px;color:var(--blue);">'+(row.sg_floor?'$'+row.sg_floor:'—')+'</td>'
+      +'<td style="padding:5px 8px;">'+(row.sg_avg?'$'+row.sg_avg:'—')+'</td>'
+      +'<td style="padding:5px 8px;color:'+sc+';">'+sp+'</td>'
+      +'</tr>';
+  }).join('');
+}
+
 </script>
 </body>
 </html>  renderEventList();
