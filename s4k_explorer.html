@@ -1262,24 +1262,33 @@ async function loadIntelKalshi(){
   const status = document.getElementById('intel-kalshi-status');
   const tbody  = document.getElementById('intel-kalshi-tbody');
   if(status) status.textContent='Loading…';
-  if(tbody)  tbody.innerHTML='<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted);">Fetching…</td></tr>';
+  if(tbody)  tbody.innerHTML='<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted);">Fetching via GAS proxy…</td></tr>';
   try{
-    const data = await fetch('https://api.elections.kalshi.com/trade-api/v2/markets?status=open&limit=1000').then(r=>r.json());
-    let markets = data.markets||[];
-    if(sport){
-      const q = sport.toLowerCase().replace(/ /g,'');
-      markets = markets.filter(m=>{
-        const mc = (m.category||'').toLowerCase().replace(/ /g,'');
-        const tk = (m.ticker||'').toUpperCase();
-        return mc.includes(q) || tk.includes(sport.replace(/ /g,'').toUpperCase().substring(0,3));
-      });
-    }
-    _kalshiAllRows = markets;
+    // Always use GAS proxy — avoids CORS from hosted environments (GitHub Pages, Netlify, etc.)
+    const r = await gasGet({action:'getKalshiMarkets', sport, limit:'1000'});
+    if(!r.ok) throw new Error(r.error||'GAS proxy failed');
+    _kalshiAllRows = r.markets||[];
     renderIntelKalshiTable(_kalshiAllRows);
-    if(status) status.textContent = _kalshiAllRows.length+' markets';
+    if(status) status.textContent = _kalshiAllRows.length+' markets · via GAS';
   }catch(e){
-    if(status) status.textContent='Error: '+e.message;
-    if(tbody)  tbody.innerHTML='<tr><td colspan="6" style="padding:16px;color:var(--red);text-align:center;">'+e.message+' — Kalshi may block CORS. Try the VPN or use GAS proxy.</td></tr>';
+    // Fallback: direct fetch (works on localhost, may fail on hosted)
+    try{
+      const data = await fetch('https://api.elections.kalshi.com/trade-api/v2/markets?status=open&limit=1000').then(r2=>r2.json());
+      let markets = data.markets||[];
+      if(sport){
+        const q=sport.toLowerCase().replace(/ /g,'');
+        markets=markets.filter(m=>{
+          const mc=(m.category||'').toLowerCase().replace(/ /g,'');
+          return mc.includes(q)||( m.ticker||'').toUpperCase().includes(sport.replace(/ /g,'').toUpperCase().substring(0,3));
+        });
+      }
+      _kalshiAllRows=markets;
+      renderIntelKalshiTable(_kalshiAllRows);
+      if(status) status.textContent=_kalshiAllRows.length+' markets · direct';
+    }catch(e2){
+      if(status) status.textContent='Error: '+e.message;
+      if(tbody)  tbody.innerHTML='<tr><td colspan="6" style="padding:16px;color:var(--red);text-align:center;">CORS blocked. Deploy GAS and connect it to load Kalshi data.</td></tr>';
+    }
   }
 }
 
@@ -1345,7 +1354,34 @@ async function loadIntelPlayers(){
     }
     // Render leaderboard
     if(lbEl){
-      if(!players.length){lbEl.innerHTML='<div style="color:var(--muted);font-size:12px;padding:8px 0;">No live player data</div>';return;}
+      if(!players.length){
+      // Show upcoming games schedule when no live data
+      lbEl.innerHTML='<div style="color:var(--muted);font-size:12px;padding:8px 0;">No live games right now — player stats appear here during active games.</div>'
+        +'<div style="margin-top:12px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Upcoming Games</div>';
+      try{
+        const sched=await fetch('https://site.api.espn.com/apis/site/v2/sports/'
+          +({nba:'basketball/nba',nfl:'football/nfl',mlb:'baseball/mlb',nhl:'hockey/nhl'}[_intelLiveLeague]||'basketball/nba')
+          +'/scoreboard').then(r=>r.json()).catch(()=>({}));
+        const games=(sched.events||[]).slice(0,8);
+        if(!games.length){lbEl.innerHTML+='<div style="color:var(--muted);font-size:12px;">No upcoming games found</div>';return;}
+        lbEl.innerHTML+=games.map(ev=>{
+          const comp=ev.competitions?.[0]||{};
+          const home=comp.competitors?.find(c=>c.homeAway==='home')||{};
+          const away=comp.competitors?.find(c=>c.homeAway==='away')||{};
+          const dt=comp.status?.type?.shortDetail||ev.date||'';
+          const isT=getTrackedEventsForTeam(home.team?.displayName||'').length||getTrackedEventsForTeam(away.team?.displayName||'').length;
+          return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);'+(isT?'background:rgba(76,110,245,0.06);':'')+'">'
+            +'<span style="font-size:12px;color:var(--text2);min-width:80px;">'+dt+'</span>'
+            +'<span style="font-size:12px;font-weight:'+(isT?700:400)+';color:'+(isT?'var(--white)':'var(--text2)')+';">'
+            +(away.team?.abbreviation||'?')+' @ '+(home.team?.abbreviation||'?')+'</span>'
+            +(isT?'<span style="font-size:10px;color:var(--blue);">★ tracked</span>':'')
+            +'</div>';
+        }).join('');
+      }catch(e2){
+        lbEl.innerHTML+='<div style="color:var(--muted);font-size:11px;">Could not load schedule</div>';
+      }
+      return;
+    }
       lbEl.innerHTML=`<table style="width:100%;border-collapse:collapse;font-size:11px;">
         <thead><tr style="color:var(--muted);font-size:10px;text-transform:uppercase;">
           <td style="padding:4px 8px;border-bottom:1px solid var(--border);">#</td>
