@@ -788,7 +788,7 @@ let perfIndex  = null;    // performer_index for selected event
 let feedItems  = [];      // feed_items for selected event
 let perfSnaps  = [];      // performer_snapshots for selected performer
 let overlayChartInst  = null;
-let scatterChartInst  = null;
+let scatterChartInst  = null;  // alias — always use destroyScatterChart()
 let spreadChartInst   = null;
 let feedFilters        = new Set(['High','Medium','Low']);
 
@@ -1806,6 +1806,7 @@ function renderOverlay(){
   if(!teHistory.length&&!sgHistory.length)return;
   const canvas=document.getElementById('overlay-chart');
   if(overlayChartInst){overlayChartInst.destroy();overlayChartInst=null;}
+  const _oc=Chart.getChart(document.getElementById('overlay-chart')); if(_oc) _oc.destroy();
 
   // Build unified time axis from all sources
   const _gtEv=evIndex[selEventId]||{};
@@ -2136,8 +2137,9 @@ function renderScatter(){
   const canvas=document.getElementById('scatter-chart');
   const spreadCanvas=document.getElementById('spread-chart');
   if(!canvas||!spreadCanvas) return;
-  if(scatterChartInst){scatterChartInst.destroy();scatterChartInst=null;}
+  destroyScatterChart();
   if(spreadChartInst){spreadChartInst.destroy();spreadChartInst=null;}
+  const _sc=Chart.getChart(document.getElementById('spread-chart')); if(_sc) _sc.destroy();
 
   const ev=evIndex[selEventId]||{};
   const evDate=ev.occurs_at_local||ev.event_date||null;
@@ -2244,8 +2246,21 @@ function toggleOvFilter(level, el){
 }
 
 // ── Overlay news: merges Firestore feed_items + live ESPN articles ─
-let _ovShowESPN = true;
-let _ovShowFeed = true;
+let _ovShowESPN    = true;
+let _ovShowFeed    = true;
+let ovESPNArticles     = [];
+let currentESPNLeague = 'nba';
+
+function destroyScatterChart(){
+  if(scatterChartInst){ scatterChartInst.destroy(); scatterChartInst=null; }
+  if(window._scatterChart){ window._scatterChart.destroy(); window._scatterChart=null; }
+  // Belt-and-suspenders: destroy any Chart.js instance registered on the canvas
+  const cv = document.getElementById('scatter-chart');
+  if(cv){
+    const existing = Chart.getChart(cv);
+    if(existing) existing.destroy();
+  }
+}
 
 function toggleOvESPN(el){ _ovShowESPN=!_ovShowESPN; el.classList.toggle('on'); renderOverlayNews(); }
 function toggleOvFeed(el){ _ovShowFeed=!_ovShowFeed; el.classList.toggle('on'); renderOverlayNews(); }
@@ -4373,8 +4388,8 @@ function renderAggScatter(){
     return;
   }
   cv.style.display='';
-  if(window._scatterChart){ window._scatterChart.destroy(); window._scatterChart=null; }
-  window._scatterChart = new Chart(cv.getContext('2d'),{
+  destroyScatterChart();
+  scatterChartInst = new Chart(cv.getContext('2d'),{
     type:'scatter',
     data:{datasets:[
       {label:'TEvo Floor',data:agg.tePoints,backgroundColor:'rgba(76,110,245,0.75)',pointRadius:6,pointHoverRadius:9},
