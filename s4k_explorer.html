@@ -3886,8 +3886,7 @@ async function loadMatchedNews(){
     if(pid){
       const perfName = (ev.home_performer||ev.performer||'').split(' ').pop().toLowerCase();
       if(perfName.length > 3){
-        const allItems = await FS.query('feed_items',
-          [{field:'processed',op:'EQUAL',value:false}],
+        const allItems = await FS.query('feed_items',[],
           [{field:'posted_at',dir:'DESCENDING'}], 200);
         const perfMatched = (allItems||[]).filter(item=>{
           const txt = (item.post_text||item.title||'').toLowerCase();
