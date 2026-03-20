@@ -185,6 +185,13 @@ body{background:var(--bg);color:var(--white);font-family:var(--font);font-size:1
       <!-- GROUP: NEWS & FEEDS -->
       <div class="nav-group-label">News</div>
       <button class="nav-tab"        id="ntab-news"      onclick="showTab('news',this);loadNewsTab()">News</button>
+      <div class="nav-sep"></div>
+      <!-- GROUP: CHAT -->
+      <div class="nav-group-label">AI</div>
+      <button class="nav-tab"        id="ntab-chat"      onclick="showTab('chat',this);initChat()">Chat</button>
+      <div class="nav-sep"></div>
+      <button class="btn" id="autoRefreshBtn" onclick="toggleAutoRefresh();this.classList.toggle('primary');this.textContent=_autoRefreshActive?'⏸':'▶ Auto'" style="font-size:11px;padding:4px 9px;flex-shrink:0;" title="Toggle 5-min auto-refresh">▶ Auto</button>
+      <button class="btn" onclick="loadEventIndex()" style="font-size:11px;padding:4px 9px;flex-shrink:0;" title="Reload events">↻</button>
     </div>
     <div class="main">
       <!-- Sidebar: 3-level event hierarchy -->
@@ -589,6 +596,28 @@ body{background:var(--bg);color:var(--white);font-family:var(--font);font-size:1
           </div>
         </div>
 
+        <!-- CHAT TAB -->
+        <div id="tab-chat" style="display:none;flex-direction:column;height:100%;min-height:500px;">
+          <div style="flex:1;overflow-y:auto;padding:0 0 12px;" id="chat-messages">
+            <div style="color:var(--muted);font-size:12px;padding:16px 0;text-align:center;">
+              Ask about events, prices, standings, or market signals.<br>
+              <span style="font-size:11px;">Powered by Claude with live TEvo + ESPN tools</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;padding-top:10px;border-top:1px solid var(--border);flex-shrink:0;">
+            <textarea id="chat-input" placeholder="Ask anything — prices, standings, injury impact, market signals…"
+              style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:6px;
+              padding:8px 10px;color:var(--white);font-size:12px;resize:none;height:56px;font-family:inherit;"
+              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
+            <button class="btn primary" onclick="sendChat()" id="chat-send-btn"
+              style="padding:8px 16px;font-size:12px;align-self:flex-end;">Send</button>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding-top:6px;">
+            <span style="font-size:10px;color:var(--muted);">Shift+Enter for new line · Claude Haiku + TEvo/ESPN tools</span>
+            <button class="btn" onclick="clearChat()" style="font-size:10px;padding:2px 8px;color:var(--muted);">Clear</button>
+          </div>
+        </div>
+
         <!-- KALSHI PUBLIC TAB -->
         <div id="tab-kalshimarkets" style="display:none;">
           <div style="margin-bottom:8px;font-size:11px;color:var(--teal);">✓ Public endpoint — no auth required. Market prices, yes/no probability, volume.</div>
@@ -771,6 +800,8 @@ const TOGGLES = [
   {id:'te_count',   label:'TEvo Listings', color:'#00C896', source:'tevo', axis:'count'},
   {id:'sg_floor',   label:'SG Floor',      color:'#FF8C42', source:'sg'},
   {id:'sg_avg',     label:'SG Avg',        color:'#FFD166', source:'sg'},
+  {id:'gt_floor',   label:'GT Floor',      color:'#C084FC', source:'gt'},
+  {id:'gt_avg',     label:'GT Avg',        color:'#A855F7', source:'gt', dashed:true},
   {id:'sg_count',   label:'SG Listings',   color:'#FF6B9A', source:'sg', axis:'count'},
   {id:'spread',     label:'TE−SG Spread',  color:'#A855F7', source:'calc'},
   {id:'kalshi',     label:'Kalshi Prob',   color:'#F59E0B', source:'kalshi', axis:'pct'},
@@ -1640,7 +1671,8 @@ async function selectEvent(eventId){
       teamStanding = await FS.getDoc('team_index', league+'_'+perfIndex.espn_team_id).catch(()=>null);
     } else { teamStanding=null; }
 
-    setSt(`${ev?.event_name||eventId} · ${teHistory.length} TEvo + ${sgHistory.length} SG snapshots`);
+    const _gtNote = (evIndex[eventId]?.gt_floor)?` + GT $${evIndex[eventId].gt_floor}`:'';
+    setSt(`${ev?.event_name||eventId} · ${teHistory.length} TEvo + ${sgHistory.length} SG snapshots${_gtNote}`);
     refreshAllTabs();
 
     // Auto-populate Intel team section if it's active
@@ -1667,10 +1699,12 @@ function refreshAllTabs(){
   // Sync active combined tabs
   const newsTab   = document.getElementById('tab-news');
   const intelTab  = document.getElementById('tab-intel');
+  const chatTab   = document.getElementById('tab-chat');
   const sigTab    = document.getElementById('tab-signals');
   if(newsTab &&newsTab.style.display !=='none') loadNewsTab();
-  if(intelTab&&intelTab.style.display!=='none') loadIntelTab();
+  if(intelTab&&intelTab.style.display!=='none'&&_intelSection==='team') loadIntelTeam();
   if(sigTab  &&sigTab.style.display  !=='none') loadSignals();
+  // Chat: no refresh needed — history is persistent
 }
 
 // ── Metrics ───────────────────────────────────────────────────
@@ -1711,7 +1745,9 @@ function renderMetrics(){
     {lbl:'Floor Velocity',val:`<span style="color:${floorVelCol}">${velFloorStr}</span>`,sub:'$/hour'},
     {lbl:'SG Floor',val:fmt(sgSnap.floor),sub:''},
     {lbl:'SG Avg',val:fmt(sgSnap.avg),sub:''},
-    {lbl:'Spread',val:fmt(teSnap.floor&&sgSnap.floor?teSnap.floor-sgSnap.floor:null),sub:'TE − SG'},
+    {lbl:'GT Floor',val:ev.gt_floor?fmt(ev.gt_floor):'—',sub:'GoTickets'},
+    {lbl:'Spread (SG)',val:fmt(teSnap.floor&&sgSnap.floor?teSnap.floor-sgSnap.floor:null),sub:'TE − SG'},
+    {lbl:'Spread (GT)',val:ev.gt_floor&&teSnap.floor?fmt(teSnap.floor-ev.gt_floor):'—',sub:'TE − GT'},
     {lbl:'Kalshi Prob',val:ev.kalshi_yes_price?(Math.round(ev.kalshi_yes_price*100)+'%'):'—',sub:'win'},
     {lbl:'Owned',val:ownedCount>0?String(ownedCount)+' tkts':'—',sub:ownedCount>0?fmt(ownedFloor)+' floor':''},
     {lbl:'Position Risk',val:ownedRisk!==null?(ownedRisk>=0?'+':'')+'$'+ownedRisk:'—',
@@ -1772,10 +1808,12 @@ function renderOverlay(){
   if(overlayChartInst){overlayChartInst.destroy();overlayChartInst=null;}
 
   // Build unified time axis from all sources
+  const _gtEv=evIndex[selEventId]||{};
   const allTs=[...new Set([
     ...teHistory.map(s=>s.snapshot_ts),
     ...sgHistory.map(s=>s.snapshot_ts),
-    ...perfSnaps.map(s=>s.snapshot_ts)
+    ...perfSnaps.map(s=>s.snapshot_ts),
+    ...(_gtEv.gt_last_ts?[_gtEv.gt_last_ts]:[])
   ])].sort();
 
   const labels=allTs.map(ts=>fmtTs(ts));
@@ -1808,6 +1846,15 @@ function renderOverlay(){
     }else if(tog.source==='sg'){
       const field={sg_floor:'floor',sg_avg:'avg',sg_count:'count'}[tog.id];
       data=allTs.map(ts=>{const s=closest(sgHistory,ts);return s?s[field]||null:null;});
+    }else if(tog.source==='gt'){
+      // GT: single point from event_index (no snapshot history yet)
+      const gtEv=evIndex[selEventId]||{};
+      const gtVal=tog.id==='gt_floor'?gtEv.gt_floor:gtEv.gt_avg||null;
+      const gtTs =gtEv.gt_last_ts||null;
+      data=allTs.map(ts=>{
+        if(!gtVal||!gtTs) return null;
+        return Math.abs(new Date(ts)-new Date(gtTs))<4*3600*1000?gtVal:null;
+      });
     }else if(tog.id==='spread'){
       data=allTs.map(ts=>{
         const te=closest(teHistory,ts);
@@ -1870,6 +1917,130 @@ function renderOverlay(){
 }
 
 // ── Scatter ───────────────────────────────────────────────────
+// ── Chat Tab ─────────────────────────────────────────────────────
+let _chatHistory   = [];
+let _chatBusy      = false;
+
+function initChat(){
+  // Scroll to bottom when tab opens
+  const msgs = document.getElementById('chat-messages');
+  if(msgs) msgs.scrollTop = msgs.scrollHeight;
+}
+
+async function gasPost(params){
+  const r = await fetch(gasUrl, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(params),
+    mode:'cors'
+  });
+  if(!r.ok) throw new Error('GAS POST HTTP ' + r.status);
+  return r.json();
+}
+
+async function sendChat(){
+  const input = document.getElementById('chat-input');
+  const btn   = document.getElementById('chat-send-btn');
+  const msgs  = document.getElementById('chat-messages');
+  if(!input||!msgs) return;
+
+  const message = input.value.trim();
+  if(!message || _chatBusy) return;
+
+  // Append user bubble
+  input.value = '';
+  _chatBusy   = true;
+  if(btn) btn.disabled = true;
+  appendChatMsg('user', message);
+
+  // Thinking indicator
+  const thinkId = 'think-' + Date.now();
+  msgs.insertAdjacentHTML('beforeend',
+    '<div id="'+thinkId+'" style="display:flex;gap:8px;padding:10px 0;">'
+    +'<div style="width:28px;height:28px;border-radius:50%;background:rgba(99,102,241,0.2);'
+    +'display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;">S4K</div>'
+    +'<div style="font-size:12px;color:var(--muted);align-self:center;">Thinking…</div></div>');
+  msgs.scrollTop = msgs.scrollHeight;
+
+  // Enrich context — add current event + performer info
+  const ev    = evIndex[selEventId]||{};
+  const ctx   = selEventId
+    ? 'Currently viewing: '+ev.event_name+' on '+(ev.event_date||ev.occurs_at_local||'')
+      + (ev.tevo_floor ? ' · TEvo floor $'+ev.tevo_floor : '')
+      + (ev.sg_floor   ? ' · SG floor $'+ev.sg_floor : '')
+    : '';
+  const fullMessage = ctx ? message + ' [Context: ' + ctx + ']' : message;essage;
+
+  try{
+    const res = await gasPost({
+      action:  'chat',
+      message: fullMessage,
+      history: _chatHistory.slice(-12) // last 6 turns to stay within limits
+    });
+
+    // Remove thinking indicator
+    document.getElementById(thinkId)?.remove();
+
+    if(res.error) throw new Error(res.error);
+
+    const reply = res.response || res.reply || res.text || JSON.stringify(res);
+    appendChatMsg('assistant', reply);
+
+    // Update history
+    _chatHistory.push({role:'user',      content:message});
+    _chatHistory.push({role:'assistant', content:reply});
+    // Cap history at 20 turns
+    if(_chatHistory.length > 20) _chatHistory = _chatHistory.slice(-20);
+
+  }catch(e){
+    document.getElementById(thinkId)?.remove();
+    appendChatMsg('error', 'Error: ' + e.message);
+    console.error('[chat]', e);
+  }
+
+  _chatBusy = false;
+  if(btn) btn.disabled = false;
+  input.focus();
+}
+
+function appendChatMsg(role, text){
+  const msgs   = document.getElementById('chat-messages');
+  if(!msgs) return;
+  const isUser = role==='user';
+  const isErr  = role==='error';
+
+  // Convert markdown-ish formatting
+  const formatted = text
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code style="background:var(--bg3);padding:1px 4px;border-radius:3px;font-family:var(--mono);font-size:11px;">$1</code>')
+    .replace(/\n/g, '<br>');
+
+  const bubble = isUser
+    ? '<div style="display:flex;justify-content:flex-end;padding:8px 0;">'
+        +'<div style="background:rgba(76,110,245,0.25);border:1px solid rgba(76,110,245,0.3);'
+        +'border-radius:12px 12px 3px 12px;padding:8px 12px;max-width:75%;font-size:12px;color:var(--white);">'
+        +formatted+'</div></div>'
+    : '<div style="display:flex;gap:8px;padding:8px 0;">'
+        +'<div style="width:28px;height:28px;border-radius:50%;'
+        +(isErr?'background:rgba(239,68,68,0.2);':'background:rgba(99,102,241,0.2);')
+        +'display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;color:'
+        +(isErr?'var(--red)':'var(--blue)')+';">S4K</div>'
+        +'<div style="background:var(--bg2);border:1px solid '+(isErr?'rgba(239,68,68,0.3)':'var(--border)')
+        +';border-radius:3px 12px 12px 12px;padding:8px 12px;max-width:80%;font-size:12px;'
+        +'color:'+(isErr?'var(--red)':'var(--text2)')+';line-height:1.5;">'
+        +formatted+'</div></div>';
+
+  msgs.insertAdjacentHTML('beforeend', bubble);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function clearChat(){
+  _chatHistory = [];
+  const msgs = document.getElementById('chat-messages');
+  if(msgs) msgs.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:16px 0;text-align:center;">Chat cleared</div>';
+}
+
 // ── Aggregate context (Performer / Venue timelines) ──────────────
 let _aggContext = 'event';
 let _aggId      = null;   // performer_id or venue_id
@@ -2699,6 +2870,7 @@ function showTab(id,el){
   if(id==='scatter')   renderScatter();
   if(id==='snapshots') renderSnapshotTable();
   if(id==='groups')    renderGroupsPanel();
+  if(id==='chat')      initChat();
   if(id==='signals')   loadSignals();
   // New combined tabs — load their default section
   if(id==='intel')     loadIntelTab();
