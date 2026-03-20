@@ -119,6 +119,10 @@ body{background:var(--bg);color:var(--white);font-family:var(--font);font-size:1
 .setup-box p{color:var(--text2);font-size:12px;margin-bottom:20px;line-height:1.6;}
 .setup-field{margin-bottom:12px;}
 .setup-field label{display:block;font-size:11px;color:var(--text2);margin-bottom:4px;}
+.setup-step{font-size:12px;padding:3px 0;transition:color .2s;}
+.setup-step.done{color:var(--green);}
+.setup-step.fail{color:var(--red);}
+.setup-step.active{color:var(--white);font-weight:600;}
 </style>
 </head>
 <body>
@@ -126,14 +130,32 @@ body{background:var(--bg);color:var(--white);font-family:var(--font);font-size:1
   <!-- Setup screen shown until GAS URL saved -->
   <div class="setup" id="setup-screen">
     <div class="setup-box">
-      <h2>S4K Explorer</h2>
-      <p>Data validation + correlation tool.<br>Connect to your GAS deployment to start.</p>
+      <h2>S4K Terminal</h2>
+      <p>Ticket market intelligence.<br>Paste your GAS Web App URL below to connect.</p>
       <div class="setup-field">
         <label>GAS Web App URL</label>
-        <input class="inp" id="setup-gas" placeholder="https://script.google.com/macros/s/.../exec"/>
+        <input class="inp" id="setup-gas"
+          placeholder="https://script.google.com/macros/s/.../exec"
+          onkeydown="if(event.key==='Enter')saveSetup()"
+          style="width:100%;box-sizing:border-box;"/>
       </div>
-      <button class="btn primary" onclick="saveSetup()" style="width:100%;margin-top:4px;">Connect</button>
-      <div id="setup-err" style="color:var(--red);font-size:11px;margin-top:8px;"></div>
+      <button class="btn primary" id="connect-btn" onclick="saveSetup()" style="width:100%;margin-top:8px;padding:10px;font-size:13px;">
+        Connect
+      </button>
+      <!-- Step-by-step status -->
+      <div id="setup-steps" style="display:none;margin-top:14px;">
+        <div id="step-1" class="setup-step">⏳ Reaching GAS…</div>
+        <div id="step-2" class="setup-step" style="color:var(--muted);">· Checking Firestore token…</div>
+        <div id="step-3" class="setup-step" style="color:var(--muted);">· Loading events…</div>
+      </div>
+      <div id="setup-err" style="color:var(--red);font-size:12px;margin-top:10px;line-height:1.5;display:none;"></div>
+      <div id="setup-help" style="display:none;margin-top:12px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:6px;padding:10px;font-size:11px;color:var(--text2);line-height:1.6;">
+        <strong style="color:var(--white);">Common fixes:</strong><br>
+        · In GAS: Deploy → <em>Who has access</em> = <strong>Anyone</strong><br>
+        · Use the <code style="background:var(--bg3);padding:1px 4px;border-radius:3px;">/exec</code> URL, not <code style="background:var(--bg3);padding:1px 4px;border-radius:3px;">/dev</code><br>
+        · Make sure FIREBASE_PROJECT_ID is set in Script Properties<br>
+        · Open DevTools (F12) → Console for the exact error
+      </div>
     </div>
   </div>
 
@@ -803,31 +825,119 @@ const FS = (() => {
 
 // ── GAS fetch ─────────────────────────────────────────────────
 async function gasGet(params){
-  const r=await fetch(gasUrl+'?'+new URLSearchParams(params));
-  if(!r.ok) throw new Error('HTTP '+r.status);
-  return r.json();
+  if(!gasUrl) throw new Error('Not connected — reload and enter GAS URL');
+  let r;
+  try {
+    r = await fetch(gasUrl + '?' + new URLSearchParams(params), {mode:'cors'});
+  } catch(e) {
+    throw new Error('Network error: ' + e.message + ' (check GAS URL and deployment)');
+  }
+  if(!r.ok) throw new Error('GAS HTTP ' + r.status + ' for action=' + (params.action||'?'));
+  const data = await r.json();
+  if(data && data.error && !data.ok) throw new Error('GAS error: ' + data.error);
+  return data;
 }
 
 // ── Setup ─────────────────────────────────────────────────────
-function saveSetup(){
-  const url=document.getElementById('setup-gas').value.trim();
-  if(!url){document.getElementById('setup-err').textContent='Enter GAS URL';return;}
-  gasUrl=url;
-  localStorage.setItem(CKEY,JSON.stringify({gas:url}));
-  startApp();
+function setupStep(n, state, msg){
+  // state: 'active' | 'done' | 'fail'
+  const el = document.getElementById('step-'+n);
+  if(!el) return;
+  el.className = 'setup-step ' + state;
+  const icons = {active:'⏳', done:'✅', fail:'❌'};
+  const labels = {1:'Reaching GAS', 2:'Checking Firestore token', 3:'Loading events'};
+  el.textContent = (icons[state]||'·') + ' ' + (msg || labels[n] + (state==='done'?' — OK':''));
+  el.style.color = '';
 }
+
+function setupErr(msg){
+  const el = document.getElementById('setup-err');
+  const help = document.getElementById('setup-help');
+  if(el){ el.textContent = msg; el.style.display='block'; }
+  if(help) help.style.display='block';
+  const btn = document.getElementById('connect-btn');
+  if(btn){ btn.disabled=false; btn.textContent='Try Again'; }
+}
+
+async function saveSetup(){
+  let url = document.getElementById('setup-gas').value.trim();
+  if(!url){ setupErr('Paste your GAS URL above'); return; }
+
+  // Strip trailing slashes / spaces
+  url = url.replace(/\/+$/, '').trim();
+  if(!url.includes('script.google.com')){
+    setupErr('That doesn't look like a GAS URL. It should contain script.google.com');
+    return;
+  }
+
+  // Lock UI
+  const btn = document.getElementById('connect-btn');
+  if(btn){ btn.disabled=true; btn.textContent='Connecting…'; }
+  document.getElementById('setup-steps').style.display='block';
+  document.getElementById('setup-err').style.display='none';
+  document.getElementById('setup-help').style.display='none';
+
+  gasUrl = url;
+  setupStep(1,'active');
+  setupStep(2,'active'); document.getElementById('step-2').style.color='var(--muted)';
+  setupStep(3,'active'); document.getElementById('step-3').style.color='var(--muted)';
+
+  // Step 1: ping GAS
+  try{
+    const ping = await fetch(url + '?action=ping', {mode:'cors'});
+    if(!ping.ok) throw new Error('HTTP ' + ping.status);
+    const pd = await ping.json();
+    if(!pd.ok) throw new Error(pd.error || 'GAS returned ok:false');
+    setupStep(1,'done', 'GAS reachable — TE:' + (pd.te?'✓':'✗') + ' SG:' + (pd.sg?'✓':'✗'));
+  } catch(e){
+    setupStep(1,'fail','GAS unreachable: ' + e.message);
+    setupErr('Could not reach your GAS. Check the URL and deployment settings.');
+    return;
+  }
+
+  // Step 2: get Firestore token
+  setupStep(2,'active');
+  try{
+    const tr = await fetch(url + '?action=get_firebase_token', {mode:'cors'});
+    if(!tr.ok) throw new Error('HTTP ' + tr.status);
+    const td = await tr.json();
+    if(!td.ok) throw new Error(td.error || 'Token request failed');
+    setupStep(2,'done', 'Firestore token OK · project: ' + td.project_id);
+  } catch(e){
+    setupStep(2,'fail', 'Token failed: ' + e.message);
+    setupErr('Firestore token error: ' + e.message + '
+Check FIREBASE_PROJECT_ID and FIREBASE_CLIENT_EMAIL in Script Properties.');
+    return;
+  }
+
+  // All checks passed — save and launch
+  localStorage.setItem(CKEY, JSON.stringify({gas: url}));
+  setupStep(3,'active');
+  await startApp();
+}
+
 function resetSetup(){
   localStorage.removeItem(CKEY);
+  gasUrl='';
   document.getElementById('main-app').style.display='none';
   document.getElementById('setup-screen').style.display='flex';
+  document.getElementById('setup-steps').style.display='none';
+  document.getElementById('setup-err').style.display='none';
+  document.getElementById('setup-help').style.display='none';
+  const btn=document.getElementById('connect-btn');
+  if(btn){btn.disabled=false;btn.textContent='Connect';}
 }
+
 function getSaved(){try{return JSON.parse(localStorage.getItem(CKEY)||'{}');}catch(e){return{};}}
 
 // ── Boot ──────────────────────────────────────────────────────
 window.addEventListener('load', () => {
-  const saved=getSaved();
-  if(saved.gas){gasUrl=saved.gas;startApp();}
-  else{
+  const saved = getSaved();
+  if(saved.gas){
+    gasUrl = saved.gas;
+    document.getElementById('setup-gas').value = saved.gas;
+    startApp();
+  } else {
     document.getElementById('setup-screen').style.display='flex';
     document.getElementById('main-app').style.display='none';
   }
@@ -838,11 +948,19 @@ async function startApp(){
   document.getElementById('main-app').style.display='flex';
   setSt('Loading events…');
   buildToggleGrid();
-  await loadEventIndex();
-  setSt('Ready · '+Object.keys(evIndex).length+' events');
+  try{
+    await loadEventIndex();
+    setSt('Ready · ' + Object.keys(evIndex).length + ' events tracked');
+  } catch(e){
+    setSt('Load error: ' + e.message);
+    console.error('[startApp]', e);
+  }
 }
 
-function setSt(s){document.getElementById('status-bar').textContent=s;}
+function setSt(s){
+  const el = document.getElementById('status-bar');
+  if(el) el.textContent = s;
+}
 
 // ── Event Index ───────────────────────────────────────────────
 async function loadEventIndex(){
@@ -1022,19 +1140,23 @@ function buildGamesRow(games){
     const hT=getTrackedEventsForTeam(home.team?.displayName||'');
     const aT=getTrackedEventsForTeam(away.team?.displayName||'');
     const anyT=hT.length||aT.length;
-    h+=`<div onclick="${anyT?`selectEvent('${(hT[0]||aT[0])?.event_id}');showTab('overlay',document.getElementById('ntab-overlay'))`:''}""
-        style="background:var(--bg2);border:1px solid ${isLive?'rgba(239,68,68,0.4)':anyT?'rgba(76,110,245,0.3)':'var(--border)'};
-        border-radius:8px;padding:9px 12px;min-width:150px;${anyT?'cursor:pointer;':''}">
-      <div style="font-size:10px;color:${isLive?'var(--red)':'var(--muted)'};margin-bottom:4px;">${isLive?'🔴 '+detail:detail||'Pre'}</div>
-      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
-        <span style="font-size:13px;font-weight:${aT.length?700:400};color:${aT.length?'var(--white)':'var(--text2)'};">${away.team?.abbreviation||'?'}</span>
-        <span style="font-family:var(--mono);font-size:16px;font-weight:700;">${away.score||'—'}</span>
-        <span style="color:var(--muted);font-size:11px;">@</span>
-        <span style="font-family:var(--mono);font-size:16px;font-weight:700;">${home.score||'—'}</span>
-        <span style="font-size:13px;font-weight:${hT.length?700:400};color:${hT.length?'var(--white)':'var(--text2)'};">${home.team?.abbreviation||'?'}</span>
-      </div>
-      ${anyT?'<div style="font-size:9px;color:var(--blue);margin-top:3px;text-align:center;">★ tracked</div>':''}
-    </div>`;
+    const _eid  = anyT ? ((hT[0]||aT[0])?.event_id||'') : '';
+    const _oc   = anyT ? 'onclick="selectEvent(\'' + _eid + '\');showTab(\'overlay\',document.getElementById(\'ntab-overlay\'))"' : '';
+    const _bdr  = isLive ? 'rgba(239,68,68,0.4)' : anyT ? 'rgba(76,110,245,0.3)' : 'var(--border)';
+    const _cur  = anyT ? 'cursor:pointer;' : '';
+    const _sc   = isLive ? 'var(--red)' : 'var(--muted)';
+    const _det  = isLive ? '🔴 ' + detail : (detail || 'Pre');
+    h += '<div ' + _oc + ' style="background:var(--bg2);border:1px solid ' + _bdr + ';border-radius:8px;padding:9px 12px;min-width:150px;' + _cur + '">';
+    h += '<div style="font-size:10px;color:' + _sc + ';margin-bottom:4px;">' + _det + '</div>';
+    h += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">';
+    h += '<span style="font-size:13px;font-weight:' + (aT.length?700:400) + ';color:' + (aT.length?'var(--white)':'var(--text2)') + ';">' + (away.team?.abbreviation||'?') + '</span>';
+    h += '<span style="font-family:var(--mono);font-size:16px;font-weight:700;">' + (away.score||'—') + '</span>';
+    h += '<span style="color:var(--muted);font-size:11px;">@</span>';
+    h += '<span style="font-family:var(--mono);font-size:16px;font-weight:700;">' + (home.score||'—') + '</span>';
+    h += '<span style="font-size:13px;font-weight:' + (hT.length?700:400) + ';color:' + (hT.length?'var(--white)':'var(--text2)') + ';">' + (home.team?.abbreviation||'?') + '</span>';
+    h += '</div>';
+    h += anyT ? '<div style="font-size:9px;color:var(--blue);margin-top:3px;text-align:center;">★ tracked</div>' : '';
+    h += '</div>';
   });
   h+='</div></div>';
   return h;
@@ -3648,7 +3770,7 @@ function renderOwnedRisk(){
       <div class="metric-pill"><div class="lbl">Gap</div><div class="val" style="color:${riskCol}">${riskDelta>=0?'+':''}$${riskDelta}</div><div class="sub">${riskPct>=0?'+':''}${riskPct}% vs mkt</div></div>
     </div>
     ${daysUntil!==null?`<div style="font-size:12px;color:${daysUntil<7?'var(--red)':'var(--text2)'};">${daysUntil}d until event${riskDelta>10&&daysUntil<7?' — consider repricing below $'+mktFloor:''}</div>`:''}
-    ${histRows.length>1?`<div style="margin-top:8px;font-size:10px;color:var(--muted);">Gap trend: ${histRows.slice(-5).map(r=>`<span style="color:${r.gap>0?'var(--red)':'var(--green)'};">${fmtTs(r.ts)} ${r.gap>=0?'+':''}$${r.gap}</span>`).join(' → ')}</div>`:''}`;
+    ${histRows.length>1?('<div style="margin-top:8px;font-size:10px;color:var(--muted);">Gap trend: ' + histRows.slice(-5).map(r=>'<span style="color:'+(r.gap>0?'var(--red)':'var(--green)')+';">' + fmtTs(r.ts)+' '+(r.gap>=0?'+':'')+'$'+r.gap+'</span>').join(' → ')+'</div>'):''}`;
 }
 
 function renderFeedCausality(){
