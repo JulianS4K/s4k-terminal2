@@ -80,7 +80,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--m
 #tabs{height:27px;display:flex;align-items:stretch;border-bottom:1px solid var(--border);background:var(--bg1);flex-shrink:0}
 .tab{padding:0 13px;font-size:9px;letter-spacing:.07em;color:var(--text2);border-right:1px solid var(--border);display:flex;align-items:center;cursor:pointer;transition:all .1s}
 .tab:hover{background:var(--bg2);color:var(--text)}.tab.active{color:var(--amber);background:var(--bg2);border-bottom:2px solid var(--amber)}
-#content{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:12px}
+#content{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:12px;min-height:0}
 
 /* SECTION LABEL */
 .slabel{font-size:9px;letter-spacing:.11em;color:var(--text2);margin-bottom:7px;display:flex;align-items:center;gap:7px}
@@ -137,7 +137,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--m
 .scard{background:var(--bg1);border:1px solid var(--border);border-radius:3px;padding:7px 10px}
 .shead{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px}
 .stitle{font-size:9px;letter-spacing:.07em;color:var(--text2)}.sval{font-size:13px;font-weight:500}
-canvas.sp{width:100%;height:44px;display:block}
+canvas.sp{width:100%;height:44px;display:block;min-height:44px}
 .perf-banner{background:linear-gradient(90deg,var(--purple-dim),transparent);border:1px solid var(--purple-dim);border-radius:3px;padding:10px 14px;display:flex;align-items:center;gap:14px}
 .pb-name{font-family:var(--sans);font-size:16px;font-weight:500;color:#dde8e8}
 .pb-meta{font-size:10px;color:var(--text2)}.pb-badge{font-size:10px;padding:2px 8px;border-radius:2px;background:var(--purple-dim);color:var(--purple);font-weight:500}
@@ -234,7 +234,7 @@ canvas.sp{width:100%;height:44px;display:block}
 .chart-range{display:flex;gap:4px}
 .cr-btn{font-size:9px;padding:2px 7px;border-radius:2px;cursor:pointer;border:1px solid var(--border2);color:var(--text2);background:transparent;font-family:var(--mono);transition:all .15s}
 .cr-btn:hover{background:var(--bg2)}.cr-btn.active{background:var(--bg3);color:var(--text);border-color:var(--border2)}
-#pattern-chart-canvas{width:100%;height:200px;display:block}
+#pattern-chart-canvas{width:100%;height:200px;display:block;min-height:200px}
 ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -351,9 +351,11 @@ canvas.sp{width:100%;height:44px;display:block}
     </div>
   </div>
   <div id="tabs">
-    <div class="tab active">PRICING</div>
-    <div class="tab">HISTORY</div>
-    <div class="tab">ALERTS</div>
+    <div class="tab active" onclick="switchTab('pricing',this)">PRICING</div>
+    <div class="tab" id="tab-tevo" onclick="switchTab('tevo',this)">TEVO</div>
+    <div class="tab" id="tab-kalshi" onclick="switchTab('kalshi',this)">KALSHI</div>
+    <div class="tab" onclick="switchTab('history',this)">HISTORY</div>
+    <div class="tab" onclick="switchTab('alerts',this)">ALERTS</div>
   </div>
   <div id="content"></div>
 </div>
@@ -1029,6 +1031,224 @@ function setRange(btn,days){
   const lbl=document.getElementById('chart-range-lbl');
   if(lbl)lbl.textContent='LAST '+days+' DAYS';
   buildAndRenderChart();
+}
+
+
+// ── TAB SWITCHING ────────────────────────────────────────
+let activeTab = 'pricing';
+let lastEventKey = 'wsh-nyk';
+let lastTeamKey = null;
+let lastVenueKey = null;
+let lastViewType = 'ev';
+
+// Patch sel() to track current selection
+const _origSel = sel;
+function sel(el,type,key){
+  lastViewType=type;
+  if(type==='ev')lastEventKey=key;
+  if(type==='team')lastTeamKey=key;
+  if(type==='venue')lastVenueKey=key;
+  // Show/hide TEvo and Kalshi tabs — only relevant for events and teams
+  document.getElementById('tab-tevo').style.display = (type==='ev'||type==='team') ? 'flex' : 'none';
+  document.getElementById('tab-kalshi').style.display = (type==='ev'||type==='team') ? 'flex' : 'none';
+  // Reset to pricing tab on selection change
+  if(activeTab !== 'pricing'){
+    document.querySelectorAll('#tabs .tab').forEach(t=>t.classList.remove('active'));
+    document.querySelector('#tabs .tab').classList.add('active');
+    activeTab='pricing';
+  }
+  _origSel(el,type,key);
+}
+
+function switchTab(tab, btn){
+  document.querySelectorAll('#tabs .tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  activeTab=tab;
+  if(tab==='pricing'){
+    if(lastViewType==='ev')renderEvent(lastEventKey);
+    else if(lastViewType==='team')renderTeam(lastTeamKey);
+    else renderVenue(lastVenueKey);
+  } else if(tab==='tevo'){
+    renderTevoTab();
+  } else if(tab==='kalshi'){
+    renderKalshiTab();
+  } else if(tab==='history'){
+    renderPlaceholderTab('HISTORY','Historical snapshots — coming soon. Will show per-event price deltas over time.');
+  } else if(tab==='alerts'){
+    renderPlaceholderTab('ALERTS','Alert configuration — coming soon. Set floor thresholds and count velocity triggers.');
+  }
+}
+
+// ── TEVO TAB ─────────────────────────────────────────────
+function renderTevoTab(){
+  const evKey = lastViewType==='team' ? TEAMS[lastTeamKey]?.events[0] : lastEventKey;
+  const d = EV[evKey]; if(!d) return;
+  const t = d.tevo;
+  const evDocs = lastViewType==='team' ? TEAMS[lastTeamKey].events.map(k=>EV[k]).filter(Boolean) : [d];
+
+  const listingsData = [
+    {sec:'Floor',price:t.floor,pct:0,count:Math.round(t.ct*.08),type:'GA'},
+    {sec:'Lower Bowl',price:Math.round(t.floor*1.4),pct:22,count:Math.round(t.ct*.18),type:'Reserved'},
+    {sec:'Mid Bowl',price:Math.round(t.floor*2.2),pct:57,count:Math.round(t.ct*.28),type:'Reserved'},
+    {sec:'Club Level',price:Math.round(t.floor*3.8),pct:171,count:Math.round(t.ct*.14),type:'Premium'},
+    {sec:'Lower Sideline',price:Math.round(t.floor*5.1),pct:292,count:Math.round(t.ct*.10),type:'Premium'},
+    {sec:'Courtside',price:Math.round(t.floor*18),pct:1292,count:Math.round(t.ct*.02),type:'VIP'},
+  ];
+
+  const formatRows = listingsData.map(r=>`<tr>
+    <td>${r.sec}</td>
+    <td class="num amber">${fmt(r.price)}</td>
+    <td class="num">${r.pct>0?'+'+r.pct+'%':'—'}</td>
+    <td class="num green">${fmtN(r.count)}</td>
+    <td><span style="font-size:9px;padding:1px 5px;border-radius:2px;background:var(--bg3);color:var(--text2)">${r.type}</span></td>
+  </tr>`).join('');
+
+  const formatMix = [
+    {fmt:'Mobile/TM',pct:52,color:'var(--amber)'},{fmt:'PDF Eticket',pct:28,color:'var(--blue)'},{fmt:'Flash Seats',pct:12,color:'var(--purple)'},{fmt:'Hard Ticket',pct:8,color:'var(--teal)'}
+  ];
+  const fmtBars = formatMix.map(f=>`
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="font-size:9px;color:var(--text2);width:90px">${f.fmt}</span>
+      <div style="flex:1;height:6px;background:var(--bg3);border-radius:3px;overflow:hidden">
+        <div style="width:${f.pct}%;height:100%;background:${f.color};border-radius:3px"></div>
+      </div>
+      <span style="font-size:9px;color:var(--text2);width:28px;text-align:right">${f.pct}%</span>
+    </div>`).join('');
+
+  $('content').innerHTML=`
+  <div>
+    <div class="slabel">TEVO LIVE — INVENTORY BREAKDOWN <span class="src src-tevo">TEvo #${EV_MAPS[evKey]?.tevo||'?'}</span></div>
+    <div class="mrow">
+      <div class="mcard"><div class="mc-lbl">FLOOR</div><div class="mc-val amber">${fmt(t.floor)}</div><div class="mc-sub">lowest ask</div></div>
+      <div class="mcard"><div class="mc-lbl">MEDIAN</div><div class="mc-val">${fmt(t.median)}</div><div class="mc-sub">midpoint</div></div>
+      <div class="mcard"><div class="mc-lbl">AVERAGE</div><div class="mc-val">${fmt(t.avg)}</div><div class="mc-sub">weighted</div></div>
+      <div class="mcard"><div class="mc-lbl">MAX</div><div class="mc-val red">${fmt(t.max)}</div><div class="mc-sub">ceiling</div></div>
+      <div class="mcard"><div class="mc-lbl">LISTINGS</div><div class="mc-val green">${fmtN(t.ct)}</div><div class="mc-sub">ticket groups</div></div>
+    </div>
+  </div>
+  <div class="ctx2">
+    <div>
+      <div class="slabel">SECTION PRICING</div>
+      <table class="etable">
+        <thead><tr><th>Section</th><th class="num">Price</th><th class="num">vs Floor</th><th class="num">Listings</th><th>Type</th></tr></thead>
+        <tbody>${formatRows}</tbody>
+      </table>
+    </div>
+    <div>
+      <div class="slabel">TICKET FORMAT MIX</div>
+      <div class="ccard" style="margin-bottom:8px">${fmtBars}</div>
+      <div class="slabel">SPLITS AVAILABLE</div>
+      <div class="ccard">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${[1,2,3,4,5,6,8,10].map(n=>`<div style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--bg3);border-radius:2px;font-size:11px;font-weight:500;color:var(--text)">${n}</div>`).join('')}
+        </div>
+        <div style="font-size:9px;color:var(--text2);margin-top:8px">qty=7 unavailable — nearest valid splits shown</div>
+      </div>
+      ${lastViewType==='team'&&evDocs.length>1?`
+      <div class="slabel" style="margin-top:8px">ACROSS ${evDocs.length} EVENTS</div>
+      <table class="etable">
+        <thead><tr><th>Event</th><th class="num">Floor</th><th class="num">Count</th></tr></thead>
+        <tbody>${evDocs.map(e=>`<tr><td>${e.title.split(' at ')[0].substring(0,20)}…</td><td class="num amber">${fmt(e.tevo.floor)}</td><td class="num green">${fmtN(e.tevo.ct)}</td></tr>`).join('')}</tbody>
+      </table>`:''}
+    </div>
+  </div>`;
+}
+
+// ── KALSHI TAB ────────────────────────────────────────────
+function renderKalshiTab(){
+  const teamKey = lastViewType==='team' ? lastTeamKey : (EV[lastEventKey]?.team||null);
+  const tm = teamKey ? TEAMS[teamKey] : null;
+
+  const fullLeague = {
+    'OKC Thunder':37,'Boston Celtics':14,'San Antonio Spurs':16,'Cleveland Cavaliers':6,
+    'Denver Nuggets':8,'Los Angeles Lakers':6,'Minnesota Timberwolves':2,
+    'New York Knicks':4,'Golden State Warriors':0,'Houston Rockets':1,'Detroit Pistons':3,
+    'Indiana Pacers':0,'Miami Heat':0,'Phoenix Suns':0
+  };
+
+  const sorted = Object.entries(fullLeague).sort((a,b)=>b[1]-a[1]);
+  const leagueRows = sorted.map(([name,pct])=>{
+    const isThis = tm && name===tm.name;
+    return`<tr${isThis?' style="background:var(--purple-dim)"':''}>
+      <td${isThis?` style="color:var(--purple);font-weight:500"`:''}>
+        ${isThis?'▶ ':''} ${name}
+      </td>
+      <td class="num" style="color:var(--purple)">${pct}%</td>
+      <td>
+        <div style="height:4px;background:var(--bg3);border-radius:2px;overflow:hidden;width:120px;display:inline-block">
+          <div style="width:${pct}%;height:100%;background:var(--purple);border-radius:2px"></div>
+        </div>
+      </td>
+      <td class="num" style="color:var(--text2)">${pct>0?Math.round(100/pct)+'–1':'—'}</td>
+    </tr>`;
+  }).join('');
+
+  const totalPct = sorted.reduce((a,[,p])=>a+p,0);
+  const thisOdds = tm?fullLeague[tm.name]||0:0;
+
+  $('content').innerHTML=`
+  <div>
+    <div class="slabel">KALSHI CHAMPIONSHIP MARKET <span class="src src-kalshi">KXNBA-26</span></div>
+    <div class="mrow">
+      <div class="mcard"><div class="mc-lbl">${tm?tm.name:'THIS TEAM'}</div><div class="mc-val purple">${thisOdds}%</div><div class="mc-sub">yes_bid</div></div>
+      <div class="mcard"><div class="mc-lbl">IMPLIED ODDS</div><div class="mc-val">${thisOdds>0?Math.round(100/thisOdds)+'–1':'—'}</div><div class="mc-sub">moneyline equiv</div></div>
+      <div class="mcard"><div class="mc-lbl">MARKET SUM</div><div class="mc-val ${totalPct>100?'red':'green'}">${totalPct}%</div><div class="mc-sub">${totalPct>100?'overround':'normal'}</div></div>
+      <div class="mcard"><div class="mc-lbl">CADENCE</div><div class="mc-val amber">1H</div><div class="mc-sub">last: 38m ago</div></div>
+      <div class="mcard"><div class="mc-lbl">MARKET</div><div class="mc-val" style="font-size:11px">OPEN</div><div class="mc-sub">NBA 2026</div></div>
+    </div>
+  </div>
+  <div class="ctx2">
+    <div>
+      <div class="slabel">NBA CHAMPIONSHIP ODDS — ALL TEAMS</div>
+      <table class="etable">
+        <thead><tr><th>Team</th><th class="num">Odds %</th><th>Bar</th><th class="num">Implied</th></tr></thead>
+        <tbody>${leagueRows}</tbody>
+      </table>
+    </div>
+    <div>
+      <div class="slabel">ODDS TREND — 7D <span class="src src-kalshi">KALSHI</span></div>
+      <div class="chart-wrap">
+        <canvas id="kalshi-chart-canvas" style="width:100%;height:180px;display:block;min-height:180px"></canvas>
+      </div>
+      <div style="margin-top:10px">
+        <div class="slabel">HOW TO READ</div>
+        <div class="ccard" style="font-size:10px;color:var(--text2);line-height:1.7">
+          <div style="margin-bottom:4px"><span style="color:var(--purple)">Yes bid</span> = market's implied probability of winning the championship</div>
+          <div style="margin-bottom:4px"><span style="color:var(--amber)">Implied odds</span> = 1 ÷ probability (e.g. 4% → 25–1)</div>
+          <div style="margin-bottom:4px"><span style="color:var(--text)">Market sum</span> > 100% = overround (vig). Normal for Kalshi.</div>
+          <div style="color:var(--text3)">Source: Kalshi · event KXNBA-26 · 1h polling cadence</div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+  // Render Kalshi trend chart
+  setTimeout(()=>{
+    const canvas=document.getElementById('kalshi-chart-canvas');
+    if(!canvas||typeof Chart==='undefined')return;
+    const labels=genDays(7);
+    const teamOdds=new Array(7).fill(thisOdds).map((v,i)=>Math.max(0,v+(i-3)*.3+(Math.random()-.5)*.4));
+    const okcOdds=new Array(7).fill(37).map((v,i)=>v+(i-3)*.2+(Math.random()-.5)*.6);
+    new Chart(canvas,{
+      type:'line',
+      data:{labels,datasets:[
+        {label:tm?tm.name:'This Team',data:teamOdds,borderColor:'#9b8ff5',borderWidth:2,pointRadius:2,fill:false,tension:.3},
+        {label:'OKC Thunder',data:okcOdds,borderColor:'#4da3f5',borderWidth:1.5,borderDash:[4,2],pointRadius:2,fill:false,tension:.3},
+      ]},
+      options:{
+        responsive:true,maintainAspectRatio:false,animation:{duration:300},
+        plugins:{legend:{display:true,labels:{color:'#596060',font:{family:'IBM Plex Mono',size:9},boxWidth:12,padding:12}},tooltip:{backgroundColor:'#1c1f1f',borderColor:'#2a2f2f',borderWidth:1,titleColor:'#596060',bodyColor:'#bec8c8',titleFont:{family:'IBM Plex Mono',size:9},bodyFont:{family:'IBM Plex Mono',size:10}}},
+        scales:{
+          x:{grid:{color:'#222626',lineWidth:.5},ticks:{color:'#596060',font:{family:'IBM Plex Mono',size:9}}},
+          y:{grid:{color:'#222626',lineWidth:.5},ticks:{color:'#9b8ff5',font:{family:'IBM Plex Mono',size:9},callback:v=>v.toFixed(1)+'%'},min:0}
+        }
+      }
+    });
+  },80);
+}
+
+function renderPlaceholderTab(title,msg){
+  $('content').innerHTML=`<div style="padding:40px 20px;text-align:center;color:var(--text2)"><div style="font-size:11px;letter-spacing:.1em;margin-bottom:8px">${title}</div><div style="font-size:10px">${msg}</div></div>`;
 }
 
 </script>
