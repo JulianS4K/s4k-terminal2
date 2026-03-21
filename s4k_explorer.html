@@ -145,7 +145,7 @@ canvas.sp{width:100%;height:44px;display:block;min-height:44px}
 .vb-name{font-family:var(--sans);font-size:16px;font-weight:500;color:#dde8e8}
 
 /* RIGHT FEED */
-#right{width:228px;flex-shrink:0;background:var(--bg1);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+
 .flist{overflow-y:auto;flex:1}
 .fi{padding:8px 9px;border-bottom:1px solid var(--border)}
 .fi-src{font-size:9px;font-weight:600;letter-spacing:.07em;padding:1px 5px;border-radius:2px;display:inline-block;margin-bottom:3px}
@@ -235,6 +235,58 @@ canvas.sp{width:100%;height:44px;display:block;min-height:44px}
 .cr-btn{font-size:9px;padding:2px 7px;border-radius:2px;cursor:pointer;border:1px solid var(--border2);color:var(--text2);background:transparent;font-family:var(--mono);transition:all .15s}
 .cr-btn:hover{background:var(--bg2)}.cr-btn.active{background:var(--bg3);color:var(--text);border-color:var(--border2)}
 #pattern-chart-canvas{position:absolute;inset:10px 12px 10px 12px;width:calc(100% - 24px)!important;height:calc(100% - 20px)!important}
+
+/* SEARCH */
+#search-wrap{padding:8px 9px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg1)}
+#search-input{width:100%;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:11px;padding:5px 8px 5px 26px;border-radius:2px;outline:none;transition:border-color .15s}
+#search-input:focus{border-color:var(--amber)}
+.search-icon{position:absolute;left:17px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--text2);pointer-events:none}
+.search-wrap-inner{position:relative}
+#search-results{background:var(--bg2);border:1px solid var(--border2);border-top:none;border-radius:0 0 3px 3px;max-height:280px;overflow-y:auto;display:none}
+#search-results.open{display:block}
+.sr-item{padding:8px 9px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
+.sr-item:hover{background:var(--bg3)}.sr-item:last-child{border-bottom:none}
+.sr-name{font-size:11px;font-weight:500;color:var(--text);line-height:1.3}
+.sr-meta{font-size:9px;color:var(--text2);margin-top:2px;display:flex;justify-content:space-between}
+.sr-pop{font-size:9px;padding:1px 4px;border-radius:2px;background:var(--green-dim);color:var(--green)}
+.sr-loading{padding:10px 9px;font-size:10px;color:var(--text2);text-align:center}
+.sr-error{padding:10px 9px;font-size:10px;color:var(--red)}
+.sr-track-btn{font-size:9px;font-weight:600;padding:2px 7px;border-radius:2px;background:var(--amber-dim);color:var(--amber);border:1px solid var(--amber);cursor:pointer;font-family:var(--mono);transition:all .15s;flex-shrink:0}
+.sr-track-btn:hover{background:#5a3d10}
+.sr-track-btn.tracked{background:var(--green-dim);color:var(--green);border-color:var(--green)}
+
+/* PERFORMER SEARCH TAB */
+#right{width:228px;flex-shrink:0;background:var(--bg1);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.rtabs{height:27px;display:flex;align-items:stretch;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0}
+.rtab{flex:1;font-size:9px;letter-spacing:.07em;color:var(--text2);display:flex;align-items:center;justify-content:center;cursor:pointer;border-right:1px solid var(--border);transition:all .1s}
+.rtab:last-child{border-right:none}
+.rtab:hover{background:var(--bg3);color:var(--text)}
+.rtab.active{color:var(--amber);background:var(--bg2);border-bottom:2px solid var(--amber)}
+.rpanel{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.rpanel.hidden{display:none}
+/* performer search */
+#psearch-wrap{padding:8px 9px;border-bottom:1px solid var(--border);flex-shrink:0}
+#psearch-input{width:100%;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:11px;padding:5px 8px 5px 26px;border-radius:2px;outline:none;transition:border-color .15s}
+#psearch-input:focus{border-color:var(--purple)}
+#psearch-results{overflow-y:auto;flex:1;background:var(--bg1)}
+.pr-item{padding:9px 10px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
+.pr-item:hover{background:var(--bg2)}
+.pr-name{font-size:11px;font-weight:500;color:var(--text);line-height:1.3;margin-bottom:3px}
+.pr-meta{font-size:9px;color:var(--text2);display:flex;justify-content:space-between;align-items:center;margin-bottom:2px}
+.pr-id{font-family:var(--mono);font-size:10px;color:var(--amber);letter-spacing:.04em}
+.pr-copy{font-size:9px;padding:1px 6px;border-radius:2px;background:var(--bg3);border:1px solid var(--border2);color:var(--text2);cursor:pointer;font-family:var(--mono);transition:all .12s}
+.pr-copy:hover{background:var(--amber-dim);color:var(--amber);border-color:var(--amber)}
+.pr-copy.copied{background:var(--green-dim);color:var(--green);border-color:var(--green)}
+.pr-score{font-size:9px;padding:1px 4px;border-radius:2px;background:var(--green-dim);color:var(--green)}
+.pr-evts-btn{font-size:9px;padding:2px 7px;border-radius:2px;background:transparent;border:1px solid var(--border2);color:var(--text2);cursor:pointer;font-family:var(--mono);margin-top:4px;transition:all .12s;width:100%}
+.pr-evts-btn:hover{background:var(--bg3);color:var(--text)}
+.pr-evts{background:var(--bg2);padding:6px 10px;border-bottom:1px solid var(--border);font-size:10px}
+.pr-ev-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)}
+.pr-ev-row:last-child{border-bottom:none}
+.pr-ev-name{color:var(--text);flex:1;margin-right:6px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pr-ev-date{font-size:9px;color:var(--text2);white-space:nowrap}
+.pr-ev-add{font-size:9px;padding:1px 5px;border-radius:2px;background:var(--amber-dim);color:var(--amber);border:1px solid var(--amber);cursor:pointer;font-family:var(--mono)}
+.pr-placeholder{padding:20px 12px;text-align:center;font-size:10px;color:var(--text3);line-height:1.6}
 ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -268,6 +320,13 @@ canvas.sp{width:100%;height:44px;display:block;min-height:44px}
 <!-- LEFT -->
 <div id="left">
   <div class="phead"><span>◈</span> TRACKED EVENTS</div>
+  <div id="search-wrap">
+    <div class="search-wrap-inner">
+      <span class="search-icon">⌕</span>
+      <input id="search-input" type="text" placeholder="Search TEvo events…" oninput="onSearchInput(this.value)" onkeydown="onSearchKey(event)" autocomplete="off">
+    </div>
+    <div id="search-results"></div>
+  </div>
   <div class="left-scroll">
 
     <div class="sec-div">NBA · KNICKS <span class="sec-type type-event">2 EVENTS</span></div>
@@ -360,9 +419,15 @@ canvas.sp{width:100%;height:44px;display:block;min-height:44px}
   <div id="content"></div>
 </div>
 
-<!-- RIGHT FEED -->
+<!-- RIGHT PANEL -->
 <div id="right">
-  <div class="phead"><span>◈</span> MARKET FEED</div>
+  <div class="rtabs">
+    <div class="rtab active" onclick="switchRTab('feed',this)">FEED</div>
+    <div class="rtab" onclick="switchRTab('performers',this)">PERFORMERS</div>
+  </div>
+
+  <!-- FEED PANEL -->
+  <div class="rpanel" id="rpanel-feed">
   <div class="flist">
     <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">Knicks remain on 5-game win streak heading into final stretch</div><div class="fi-t">1h ago · NBA</div></div>
     <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">Warriors drop to 33-37 after consecutive losses at home</div><div class="fi-t">4h ago · NBA</div></div>
@@ -375,6 +440,21 @@ canvas.sp{width:100%;height:44px;display:block;min-height:44px}
     <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">Formula 1: Canadian GP tickets moving fast after Verstappen drama</div><div class="fi-t">4 days ago · F1</div></div>
     <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">Jalen Brunson quietly having best season of career</div><div class="fi-t">5 days ago · NBA</div></div>
   </div>
+  </div><!-- end rpanel-feed -->
+
+  <!-- PERFORMER SEARCH PANEL -->
+  <div class="rpanel hidden" id="rpanel-performers">
+    <div id="psearch-wrap">
+      <div class="search-wrap-inner">
+        <span class="search-icon" style="color:var(--purple)">⌕</span>
+        <input id="psearch-input" type="text" placeholder="Search performers…" oninput="onPerfSearchInput(this.value)" autocomplete="off">
+      </div>
+    </div>
+    <div id="psearch-results">
+      <div class="pr-placeholder">Search for a team, artist or performer to get their TEvo ID.<br><br>Use IDs to link performers to tracked events.</div>
+    </div>
+  </div>
+
 </div>
 
 </div>
@@ -1556,6 +1636,284 @@ function renderVenueTevoTab(){
 
 function renderPlaceholderTab(title,msg){
   $('content').innerHTML=`<div style="padding:40px 20px;text-align:center;color:var(--text2)"><div style="font-size:11px;letter-spacing:.1em;margin-bottom:8px">${title}</div><div style="font-size:10px">${msg}</div></div>`;
+}
+
+
+// ── CONFIG ───────────────────────────────────────────────
+var GAS_URL = 'https://script.google.com/macros/s/AKfycbxxem8JuAgvHluBkvi9892d_9UzyT-Px6DxsYYdQgD1jyMZvliT_K3bxn4aEXzgsqvm/exec';
+
+// ── TEVO SEARCH ──────────────────────────────────────────
+var searchTimer = null;
+var trackedIds  = new Set(Object.keys(EV).map(k => EV[k].tevoId).filter(Boolean));
+
+function onSearchInput(val){
+  clearTimeout(searchTimer);
+  var q = val.trim();
+  if(!q){ closeSearch(); return; }
+  if(q.length < 2) return;
+  searchTimer = setTimeout(function(){ doSearch(q); }, 380);
+}
+
+function onSearchKey(e){
+  if(e.key === 'Escape') closeSearch();
+}
+
+function closeSearch(){
+  $('search-results').classList.remove('open');
+  $('search-results').innerHTML = '';
+}
+
+function doSearch(q){
+  var el = $('search-results');
+  el.innerHTML = '<div class="sr-loading">Searching TEvo…</div>';
+  el.classList.add('open');
+
+  var url = GAS_URL + '?action=search_te&q=' + encodeURIComponent(q) + '&only_with_available_tickets=true&per_page=20';
+  fetch(url)
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if(!data.ok || !data.events || !data.events.length){
+        el.innerHTML = '<div class="sr-loading" style="color:var(--text2)">No events found for "' + q + '"</div>';
+        return;
+      }
+      el.innerHTML = data.events.map(function(ev){
+        var date = ev.occurs_at_local ? ev.occurs_at_local.substring(0,10) : '—';
+        var venue = ev.venue ? (ev.venue.name + ', ' + ev.venue.location) : '—';
+        var pop   = ev.popularity_score ? Math.round(ev.popularity_score) : 0;
+        var ct    = ev.available_count || ev.products_count || 0;
+        var isTracked = trackedIds.has(String(ev.id));
+        var tevoId = ev.id;
+        searchResultCache[String(tevoId)] = ev;
+        return '<div class="sr-item">'
+          + '<div style="display:flex;align-items:flex-start;gap:6px">'
+          + '<div style="flex:1"><div class="sr-name">' + (ev.name||'').substring(0,52) + '</div>'
+          + '<div class="sr-meta"><span>' + date + ' · ' + venue.substring(0,30) + '</span>'
+          + (pop ? '<span class="sr-pop">↑'+pop+'</span>' : '') + '</div>'
+          + '<div class="sr-meta" style="margin-top:2px"><span style="color:var(--text3)">' + ct + ' listings</span></div></div>'
+          + '<button class="sr-track-btn'+(isTracked?' tracked':'')+'" data-tevo-id="'+tevoId+'" onclick="event.stopPropagation();trackEventById(this)">'
+          + (isTracked ? '✓ TRACKED' : '+ TRACK') + '</button>'
+          + '</div></div>';
+      }).join('');
+    })
+    .catch(function(err){
+      el.innerHTML = '<div class="sr-error">Search error: ' + err.message + '</div>';
+    });
+}
+
+var searchResultCache = {};
+
+function trackEventById(btn){
+  var tevoId = btn.getAttribute('data-tevo-id');
+  var ev = searchResultCache[tevoId];
+  if(!ev){ btn.textContent='Error'; return; }
+  trackEvent(btn, tevoId, ev);
+}
+
+function trackEvent(btn, tevoId, ev){
+  btn.textContent = 'Saving…';
+  btn.disabled = true;
+
+  var payload = {
+    event_id:     String(ev.id),
+    name:         ev.name || '',
+    src:          'TE',
+    date:         ev.occurs_at_local || ev.occurs_at || '',
+    occurs_at_local: ev.occurs_at_local || '',
+    state:        ev.state || 'shown',
+    popularity_score:        ev.popularity_score || 0,
+    long_term_popularity_score: ev.long_term_popularity_score || 0,
+    available_count:   ev.available_count || 0,
+    products_count:    ev.products_count || 0,
+    products_eticket_count: ev.products_eticket_count || 0,
+    tbd:           ev.tbd || false,
+    owned_by_office: ev.owned_by_office || false,
+    venue_id:      ev.venue ? String(ev.venue.id) : '',
+    venue:         ev.venue ? ev.venue.name : '',
+    venue_city:    ev.venue ? ev.venue.location : '',
+    performances:  ev.performances || [],
+    category:      ev.category ? ev.category.name : '',
+    category_parent: ev.category && ev.category.parent ? ev.category.parent : ''
+  };
+
+  fetch(GAS_URL, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({action:'track', event: payload})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(data){
+    if(data.ok !== false){
+      btn.textContent = '✓ TRACKED';
+      btn.classList.add('tracked');
+      btn.disabled = false;
+      trackedIds.add(String(tevoId));
+      // Add to left panel
+      addTrackedEventToPanel(ev);
+      // Map TEvo ID immediately
+      EV_MAPS[String(tevoId)] = {tevo: String(tevoId), sg:'', gt:''};
+    } else {
+      btn.textContent = 'Error';
+      btn.disabled = false;
+    }
+  })
+  .catch(function(){
+    btn.textContent = 'Error';
+    btn.disabled = false;
+  });
+}
+
+function addTrackedEventToPanel(ev){
+  var date = ev.occurs_at_local ? ev.occurs_at_local.substring(0,10) : '—';
+  var daysOut = ev.occurs_at_local ? Math.round((new Date(ev.occurs_at_local) - new Date()) / 86400000) : '?';
+  var tagCls  = daysOut <= 3 ? 'tag-soon' : daysOut <= 14 ? 'tag-near' : 'tag-far';
+  var section = document.querySelector('.sec-div.new-event-section');
+  if(!section){
+    var scroll = document.querySelector('.left-scroll');
+    section = document.createElement('div');
+    section.className = 'sec-div new-event-section';
+    section.innerHTML = 'NEW <span class="sec-type type-event">ADDED</span>';
+    scroll.appendChild(section);
+  }
+  var li = document.createElement('div');
+  li.className = 'li';
+  var evKey = String(ev.id);
+  li.innerHTML = '<div class="li-name">' + (ev.name||'').substring(0,38) + '</div>'
+    + '<div class="li-meta"><span>' + date + '</span><span class="li-floor fl-amber">—</span></div>'
+    + '<div class="li-meta" style="margin-top:3px"><span class="mapped-badge mb-tevo">TE</span>'
+    + '<span class="li-tag ' + tagCls + '">' + daysOut + ' DAYS</span></div>';
+  // Map button added via JS to avoid quote issues
+  var mapBtn = document.createElement('span');
+  mapBtn.className = 'map-btn';
+  mapBtn.textContent = 'MAP IDs';
+  mapBtn.onclick = function(e){ e.stopPropagation(); openMap(evKey); };
+  li.insertBefore(mapBtn, li.firstChild);
+  EV[evKey] = {
+    title: ev.name||'', date: date, venue: ev.venue?(ev.venue.name+', '+ev.venue.location):'',
+    pill: daysOut+' DAYS OUT', pillCls: daysOut<=3?'soon':daysOut<=14?'near':'far', days:daysOut,
+    floor:0, avg:0, median:0, max:0, count:ev.available_count||0,
+    tevo:{floor:0,avg:0,median:0,max:0,ct:ev.available_count||0},
+    sg:null, gt:null, spark1:[0,0,0,0,0,0,0], spark2:[0,0,0,0,0,0,0], team:null
+  };
+  li.onclick = function(){ sel(li,'ev',evKey); };
+  section.after(li) || section.parentNode.insertBefore(li, section.nextSibling);
+  closeSearch();
+  $('search-input').value = '';
+}
+
+// Close search on outside click
+document.addEventListener('click', function(e){
+  if(!$('search-wrap').contains(e.target)) closeSearch();
+});
+
+
+// ── RIGHT PANEL TABS ────────────────────────────────────
+function switchRTab(tab, btn){
+  document.querySelectorAll('.rtab').forEach(function(t){t.classList.remove('active');});
+  btn.classList.add('active');
+  document.getElementById('rpanel-feed').classList.toggle('hidden', tab!=='feed');
+  document.getElementById('rpanel-performers').classList.toggle('hidden', tab!=='performers');
+}
+
+// ── PERFORMER SEARCH ─────────────────────────────────────
+var perfSearchTimer = null;
+var perfResultCache = {};
+
+function onPerfSearchInput(val){
+  clearTimeout(perfSearchTimer);
+  var q = val.trim();
+  if(!q){ document.getElementById('psearch-results').innerHTML='<div class="pr-placeholder">Type to search TEvo performers.</div>'; return; }
+  if(q.length < 2) return;
+  perfSearchTimer = setTimeout(function(){ doPerfSearch(q); }, 380);
+}
+
+function doPerfSearch(q){
+  var el = document.getElementById('psearch-results');
+  el.innerHTML = '<div class="pr-placeholder">Searching…</div>';
+  fetch(GAS_URL + '?action=performerSearch&q=' + encodeURIComponent(q) + '&fuzzy=true')
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if(!data.ok || !data.performers || !data.performers.length){
+        el.innerHTML = '<div class="pr-placeholder">No performers found for "'+q+'"</div>';
+        return;
+      }
+      data.performers.forEach(function(p){ perfResultCache[String(p.id)] = p; });
+      el.innerHTML = data.performers.map(function(p){
+        var cat  = p.category ? (p.category.name||'') : '';
+        var pop  = p.long_term_popularity_score ? Math.round(p.long_term_popularity_score*100)/100 : 0;
+        var slug = p.slug || '';
+        return '<div class="pr-item" id="pr-'+p.id+'">'
+          + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px">'
+          + '<div style="flex:1;min-width:0">'
+          + '<div class="pr-name">' + (p.name||'').substring(0,32) + '</div>'
+          + '<div class="pr-meta"><span class="pr-id">ID: ' + p.id + '</span>'
+          + (pop ? '<span class="pr-score">↑'+pop+'</span>' : '') + '</div>'
+          + '<div class="pr-meta"><span style="color:var(--text3)">' + cat + '</span></div>'
+          + '</div>'
+          + '<button class="pr-copy" data-pid="'+p.id+'" onclick="copyPerfId(this)">COPY ID</button>'
+          + '</div>'
+          + '<button class="pr-evts-btn" data-pid="'+p.id+'" onclick="loadPerfEvents(this)">▸ Show upcoming events</button>'
+          + '</div>';
+      }).join('');
+    })
+    .catch(function(err){
+      el.innerHTML = '<div class="pr-placeholder" style="color:var(--red)">Error: '+err.message+'</div>';
+    });
+}
+
+function copyPerfId(btn){
+  var id = btn.getAttribute('data-pid');
+  navigator.clipboard.writeText(id).then(function(){
+    btn.textContent = '✓ COPIED';
+    btn.classList.add('copied');
+    setTimeout(function(){ btn.textContent='COPY ID'; btn.classList.remove('copied'); }, 1400);
+  });
+}
+
+function loadPerfEvents(btn){
+  var perfId = btn.getAttribute('data-pid');
+  var container = btn.parentNode;
+  // Toggle off if already open
+  var existing = container.querySelector('.pr-evts');
+  if(existing){ existing.remove(); btn.textContent='▸ Show upcoming events'; return; }
+
+  btn.textContent = 'Loading…';
+  btn.disabled = true;
+  var url = GAS_URL + '?action=search_te&performer_id=' + perfId
+    + '&only_with_available_tickets=true&per_page=10'
+    + '&occurs_at.gte=' + new Date().toISOString().substring(0,10);
+
+  fetch(url)
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      btn.textContent = '▾ Hide events';
+      btn.disabled = false;
+      var evts = (data.events||[]).slice(0,8);
+      if(!evts.length){
+        var d2 = document.createElement('div');
+        d2.className='pr-evts';
+        d2.innerHTML='<span style="color:var(--text3);font-size:9px">No upcoming events found</span>';
+        container.appendChild(d2);
+        return;
+      }
+      var evDiv = document.createElement('div');
+      evDiv.className = 'pr-evts';
+      evDiv.innerHTML = evts.map(function(ev){
+        var date = (ev.occurs_at_local||'').substring(0,10);
+        var isTracked = trackedIds.has(String(ev.id));
+        searchResultCache[String(ev.id)] = ev;
+        return '<div class="pr-ev-row">'
+          + '<span class="pr-ev-name" title="'+ev.name+'">' + (ev.name||'').substring(0,26) + '</span>'
+          + '<span class="pr-ev-date">' + date + '</span>'
+          + '<button class="pr-ev-add'+(isTracked?' tracked':'')+'" data-tevo-id="'+ev.id
+          + '" onclick="trackEventById(this)">' + (isTracked?'✓':'+')+' </button>'
+          + '</div>';
+      }).join('');
+      container.appendChild(evDiv);
+    })
+    .catch(function(){
+      btn.textContent = '▸ Show events';
+      btn.disabled = false;
+    });
 }
 
 </script>
