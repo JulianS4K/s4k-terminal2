@@ -2008,26 +2008,48 @@ function saveCfg(){
 }
 
 function pingGas(){
-  var url = document.getElementById('cfg-url').value.trim() || GAS_URL;
-  setStatus('pinging','Pinging…');
+  var url = (document.getElementById('cfg-url').value.trim() || GAS_URL).replace(/\/$/, '');
+  if(!url || !url.includes('script.google.com')){
+    setStatus('err','✗ Invalid URL — must be a script.google.com/macros/s/.../exec URL');
+    return;
+  }
+  setStatus('pinging','Step 1/2 — checking reachability…');
+
+  // Step 1: no-cors fetch just to see if URL resolves at all
+  fetch(url + '?action=ping', {method:'GET', mode:'no-cors'})
+    .then(function(){
+      // Opaque response — URL is reachable. Now try JSONP.
+      setStatus('pinging','Step 2/2 — testing JSONP (requires new deployment)…');
+      pingJsonp(url);
+    })
+    .catch(function(err){
+      // Hard network failure — wrong URL or network issue
+      setStatus('err','✗ URL unreachable — check the /exec URL is correct ('+ err.message +')');
+    });
+}
+
+function pingJsonp(url){
   var cb = '_gasPing' + Date.now();
   var script = document.createElement('script');
   var timer = setTimeout(function(){
     if(script.parentNode) script.parentNode.removeChild(script);
     delete window[cb];
-    setStatus('err','✗ Timeout — check URL and anonymous access setting');
-  }, 8000);
+    setStatus('err','✗ JSONP timeout — URL is reachable but no callback response.'
+      + ' Have you deployed the updated Code.gs + Utilities.gs?');
+  }, 10000);
   window[cb] = function(data){
     clearTimeout(timer);
     if(script.parentNode) script.parentNode.removeChild(script);
     delete window[cb];
-    if(data && data.ok !== false){
+    if(data && (data.ok || data.ts)){
+      GAS_URL = url;
+      try{ localStorage.setItem('s4k_gas_url', url); }catch(e){}
       var parts = [];
-      if(data.te)  parts.push('TEvo ✓');
-      if(data.sg)  parts.push('SG ✓');
+      if(data.te)        parts.push('TEvo ✓');
+      if(data.sg)        parts.push('SG ✓');
       if(data.anthropic) parts.push('Anthropic ✓');
-      if(data.kalshi) parts.push('Kalshi ✓');
-      setStatus('ok','✓ Connected — ' + (parts.join(' · ')||'keys not set'));
+      if(data.kalshi)    parts.push('Kalshi ✓');
+      setStatus('ok','✓ JSONP working · ' + (parts.join(' · ')||'no keys detected'));
     } else {
       setStatus('err','✗ Response error: '+(data&&data.error||'unknown'));
     }
@@ -2035,7 +2057,12 @@ function pingGas(){
   script.onerror = function(){
     clearTimeout(timer);
     delete window[cb];
-    setStatus('err','✗ Script load failed — deployment may not allow anonymous access');
+    // URL was reachable (step 1 passed) but script failed — means old deployment
+    setStatus('err',
+      '✗ URL reachable but JSONP not supported yet.<br>'
+      + '<span style="color:var(--text2)">Deploy updated <code style="color:var(--amber)">Code.gs</code> + '
+      + '<code style="color:var(--amber)">Utilities.gs</code> → New Deployment → '
+      + 'Execute as: Me · Who has access: Anyone</span>');
   };
   script.src = url + '?action=ping&callback=' + cb;
   document.head.appendChild(script);
@@ -2044,7 +2071,7 @@ function pingGas(){
 function setStatus(cls, msg){
   var el = document.getElementById('cfg-status');
   el.className = 'cfg-status ' + cls;
-  el.textContent = msg;
+  el.innerHTML = msg;
 }
 
 // Load saved URL from localStorage on startup
