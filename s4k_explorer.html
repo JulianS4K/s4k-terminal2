@@ -287,6 +287,26 @@ canvas.sp{width:100%;height:44px;display:block;min-height:44px}
 .pr-ev-date{font-size:9px;color:var(--text2);white-space:nowrap}
 .pr-ev-add{font-size:9px;padding:1px 5px;border-radius:2px;background:var(--amber-dim);color:var(--amber);border:1px solid var(--amber);cursor:pointer;font-family:var(--mono)}
 .pr-placeholder{padding:20px 12px;text-align:center;font-size:10px;color:var(--text3);line-height:1.6}
+
+/* CONFIG MODAL */
+#cfg-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;align-items:center;justify-content:center}
+#cfg-overlay.open{display:flex}
+#cfg-modal{background:var(--bg2);border:1px solid var(--border2);border-radius:4px;width:480px;padding:20px;font-family:var(--mono)}
+.cfg-title{font-size:13px;font-weight:500;color:var(--text);margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.cfg-sub{font-size:10px;color:var(--text2);margin-bottom:16px}
+.cfg-row{margin-bottom:12px}
+.cfg-lbl{font-size:9px;letter-spacing:.08em;color:var(--text2);margin-bottom:5px}
+.cfg-input{width:100%;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 9px;border-radius:2px;outline:none;transition:border-color .15s}
+.cfg-input:focus{border-color:var(--amber)}
+.cfg-status{font-size:10px;margin-top:6px;min-height:16px}
+.cfg-status.ok{color:var(--green)}.cfg-status.err{color:var(--red)}.cfg-status.pinging{color:var(--amber)}
+.cfg-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--border);padding-top:14px;align-items:center}
+.cfg-btn{font-size:10px;font-weight:500;letter-spacing:.06em;padding:5px 14px;border-radius:2px;cursor:pointer;font-family:var(--mono);border:1px solid var(--border2);transition:all .15s}
+.cfg-btn.save{background:var(--amber-dim);color:var(--amber);border-color:var(--amber)}.cfg-btn.save:hover{background:#5a3d10}
+.cfg-btn.ping{background:transparent;color:var(--blue);border-color:var(--blue)}.cfg-btn.ping:hover{background:var(--blue-dim)}
+.cfg-btn.cancel{background:transparent;color:var(--text2)}.cfg-btn.cancel:hover{background:var(--bg3)}
+.cfg-note{font-size:9px;color:var(--text3);line-height:1.6;padding:7px 9px;background:var(--bg3);border-radius:2px;border-left:2px solid var(--border2);margin-top:4px}
+.cfg-note code{color:var(--amber)}
 ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -312,7 +332,7 @@ canvas.sp{width:100%;height:44px;display:block;min-height:44px}
   <div class="dot"></div>
   <span style="font-size:10px;color:var(--text2);margin-right:10px">ALL FEEDS NOMINAL</span>
   <button class="hbtn" id="test-toggle-btn" onclick="openTest()">◎ TEST RUNNER</button>
-  <div id="clk" style="margin-left:12px">--</div>
+  <button class="hbtn" onclick="openCfg()" title="Configure GAS endpoint">⚙ CONFIG</button><div id="clk" style="margin-left:12px">--</div>
 </div>
 
 <div id="body">
@@ -499,6 +519,29 @@ canvas.sp{width:100%;height:44px;display:block;min-height:44px}
     <div id="test-body">
       <div id="test-nav"></div>
       <div id="test-detail"><div style="color:var(--text2);font-size:11px;padding:20px">Select a test from the left or click RUN ALL TESTS to execute all checks.</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- CONFIG MODAL -->
+<div id="cfg-overlay">
+  <div id="cfg-modal">
+    <div class="cfg-title">⚙ GAS Configuration</div>
+    <div class="cfg-sub">Update after each new GAS deployment. URL must allow anonymous access.</div>
+    <div class="cfg-row">
+      <div class="cfg-lbl">GAS DEPLOYMENT URL</div>
+      <input class="cfg-input" id="cfg-url" type="text" placeholder="https://script.google.com/macros/s/.../exec">
+      <div class="cfg-note">
+        Deploy → New Deployment → Web app<br>
+        Execute as: <code>Me</code> &nbsp;|&nbsp; Who has access: <code>Anyone</code>
+      </div>
+    </div>
+    <div class="cfg-status" id="cfg-status"></div>
+    <div class="cfg-btns">
+      <button class="cfg-btn ping" onclick="pingGas()">▶ TEST CONNECTION</button>
+      <div style="flex:1"></div>
+      <button class="cfg-btn cancel" onclick="closeCfg()">CANCEL</button>
+      <button class="cfg-btn save" onclick="saveCfg()">SAVE</button>
     </div>
   </div>
 </div>
@@ -1945,6 +1988,72 @@ function loadPerfEvents(btn){
       btn.disabled = false;
     });
 }
+
+
+// ── CONFIG MODAL ─────────────────────────────────────────
+function openCfg(){
+  document.getElementById('cfg-url').value = GAS_URL;
+  document.getElementById('cfg-status').textContent = '';
+  document.getElementById('cfg-status').className = 'cfg-status';
+  document.getElementById('cfg-overlay').classList.add('open');
+}
+function closeCfg(){ document.getElementById('cfg-overlay').classList.remove('open'); }
+
+function saveCfg(){
+  var url = document.getElementById('cfg-url').value.trim();
+  if(!url || !url.startsWith('https://')){ setStatus('err','Invalid URL'); return; }
+  GAS_URL = url;
+  try{ localStorage.setItem('s4k_gas_url', url); }catch(e){}
+  setStatus('ok','✓ Saved — run TEST CONNECTION to verify');
+}
+
+function pingGas(){
+  var url = document.getElementById('cfg-url').value.trim() || GAS_URL;
+  setStatus('pinging','Pinging…');
+  var cb = '_gasPing' + Date.now();
+  var script = document.createElement('script');
+  var timer = setTimeout(function(){
+    if(script.parentNode) script.parentNode.removeChild(script);
+    delete window[cb];
+    setStatus('err','✗ Timeout — check URL and anonymous access setting');
+  }, 8000);
+  window[cb] = function(data){
+    clearTimeout(timer);
+    if(script.parentNode) script.parentNode.removeChild(script);
+    delete window[cb];
+    if(data && data.ok !== false){
+      var parts = [];
+      if(data.te)  parts.push('TEvo ✓');
+      if(data.sg)  parts.push('SG ✓');
+      if(data.anthropic) parts.push('Anthropic ✓');
+      if(data.kalshi) parts.push('Kalshi ✓');
+      setStatus('ok','✓ Connected — ' + (parts.join(' · ')||'keys not set'));
+    } else {
+      setStatus('err','✗ Response error: '+(data&&data.error||'unknown'));
+    }
+  };
+  script.onerror = function(){
+    clearTimeout(timer);
+    delete window[cb];
+    setStatus('err','✗ Script load failed — deployment may not allow anonymous access');
+  };
+  script.src = url + '?action=ping&callback=' + cb;
+  document.head.appendChild(script);
+}
+
+function setStatus(cls, msg){
+  var el = document.getElementById('cfg-status');
+  el.className = 'cfg-status ' + cls;
+  el.textContent = msg;
+}
+
+// Load saved URL from localStorage on startup
+(function(){
+  try{
+    var saved = localStorage.getItem('s4k_gas_url');
+    if(saved && saved.startsWith('https://')) GAS_URL = saved;
+  }catch(e){}
+})();
 
 </script>
 </body>
