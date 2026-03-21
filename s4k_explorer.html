@@ -621,43 +621,106 @@ function renderEvent(key){
   </div>`;
   spark('sp1',d.spark1,'#f5a623');spark('sp2',d.spark2,'#3dd68c');
   setTimeout(()=>initPatternChart(d),80);
-  // Fetch live TEvo pricing if floor is zero (live event from sidebar)
-  if(!d.floor && m.tevo && m.tevo !== '') {
-    fetchLivePricing(key, m.tevo);
+  // Always fetch pricing from Firestore snapshots (fast) then live if needed
+  var tevoId = (m && m.tevo) ? m.tevo : key;
+  if(tevoId) {
+    fetchAndLoadSnapHistory(key, tevoId);
   }
 }
 
-function fetchLivePricing(evKey, tevoId) {
-  var url = GAS_URL + '?action=fetch_te&event_id=' + encodeURIComponent(tevoId) + '&manual=false';
+function fetchAndLoadSnapHistory(evKey, tevoId) {
   var ev = EV[evKey]; if(!ev) return;
-  // Show loading state in metrics
-  ['m-floor','m-avg','m-median','m-max','m-count'].forEach(function(id){
-    var el = document.getElementById(id);
-    if(el && el.textContent==='$0' || (el && el.textContent==='0')) el.textContent='…';
-  });
+  var url = GAS_URL + '?action=history&event_id=' + encodeURIComponent(tevoId);
   jsonp(url).then(function(data){
-    if(!data.ok || !data.stats) return;
-    var s = data.stats;
-    // Update EV cache
-    ev.floor  = s.floor  || 0;
-    ev.avg    = s.avg    || 0;
-    ev.median = s.median || 0;
-    ev.max    = s.max    || 0;
-    ev.count  = data.total_listings || s.count || 0;
-    ev.tevo   = {floor:s.floor||0,avg:s.avg||0,median:s.median||0,max:s.max||0,ct:ev.count};
-    // Update SG if present
-    if(data.sg) ev.sg = {floor:data.sg.floor||0,avg:data.sg.avg||0,median:data.sg.median||0,max:data.sg.max||0,ct:data.sg.count||0};
-    // Re-render if still on this event
-    if(lastEventKey===evKey) renderEvent(evKey);
-    // Update sidebar floor
-    var li = document.querySelector('.li[data-evkey="'+evKey+'"]');
-    if(li){
-      var flEl = li.querySelector('.li-floor');
-      if(flEl) flEl.textContent = s.floor ? '$'+s.floor : '—';
+    if(data.rows && data.rows.length > 0) {
+      ev._snapHistory = data.rows;
+      var snap = data.rows[data.rows.length - 1];
+      // Build 7-day sparklines from history
+      var recent = data.rows.slice(-7);
+      while(recent.length < 7) recent.unshift(recent[0]||{floor:0,count:0});
+      ev.spark1 = recent.map(function(r){ return r.floor||0; });
+      ev.spark2 = recent.map(function(r){ return r.count||0; });
+      applyPricingToEvent(evKey, {
+        floor:  snap.floor,
+        avg:    snap.avg,
+        median: snap.median,
+        max:    snap.max,
+        count:  snap.count || snap.tickets_avail
+      }, null, snap.snapshot_ts);
+      if(lastEventKey === evKey) renderEvent(evKey);
+    } else if(!ev.floor) {
+      // No history — go live
+      fetchLiveTevo(evKey, tevoId);
     }
+  }).catch(function(){ if(!ev.floor) fetchLiveTevo(evKey, tevoId); });
+}
+
+function fetchLivePricing(evKey, tevoId) {
+  var ev = EV[evKey]; if(!ev) return;
+
+  // Step 1: load from stored Firestore snapshots (fast ~300ms, no TEvo API call)
+  var histUrl = GAS_URL + '?action=history&event_id=' + encodeURIComponent(tevoId);
+  jsonp(histUrl).then(function(data){
+    if(data.rows && data.rows.length > 0) {
+      // Use most recent snapshot
+      var snap = data.rows[data.rows.length - 1];
+      applyPricingToEvent(evKey, {
+        floor:  snap.floor,
+        avg:    snap.avg,
+        median: snap.median,
+        max:    snap.max,
+        count:  snap.count || snap.tickets_avail
+      }, null, snap.snapshot_ts);
+      if(lastEventKey === evKey) renderEvent(evKey);
+    } else {
+      // No snapshots yet — fetch live from TEvo
+      fetchLiveTevo(evKey, tevoId);
+    }
+  }).catch(function(){ fetchLiveTevo(evKey, tevoId); });
+}
+
+function fetchLiveTevo(evKey, tevoId) {
+  var ev = EV[evKey]; if(!ev) return;
+  setEventStatus(evKey, 'Fetching live…');
+  var url = GAS_URL + '?action=fetch_te&event_id=' + encodeURIComponent(tevoId) + '&manual=false';
+  jsonp(url).then(function(data){
+    if(!data.ok || !data.stats) { setEventStatus(evKey, ''); return; }
+    var s = data.stats;
+    applyPricingToEvent(evKey, s, data.sg, data.fetched_at);
+    if(lastEventKey === evKey) renderEvent(evKey);
+    setEventStatus(evKey, '');
   }).catch(function(err){
-    console.warn('fetchLivePricing error:', err.message);
+    console.warn('fetchLiveTevo:', err.message);
+    setEventStatus(evKey, '');
   });
+}
+
+function applyPricingToEvent(evKey, tevo, sg, ts) {
+  var ev = EV[evKey]; if(!ev) return;
+  ev.floor  = tevo.floor  || 0;
+  ev.avg    = tevo.avg    || 0;
+  ev.median = tevo.median || 0;
+  ev.max    = tevo.max    || 0;
+  ev.count  = tevo.count  || tevo.ct || 0;
+  ev.tevo   = {floor:ev.floor, avg:ev.avg, median:ev.median, max:ev.max, ct:ev.count};
+  if(sg) ev.sg = {floor:sg.floor||0, avg:sg.avg||0, median:sg.median||0, max:sg.max||0, ct:sg.count||0};
+  // Build 7-day spark from stored snapshots if available
+  if(ev._snapHistory && ev._snapHistory.length > 1) {
+    var recent = ev._snapHistory.slice(-7);
+    ev.spark1 = recent.map(function(r){ return r.floor||0; });
+    ev.spark2 = recent.map(function(r){ return r.count||0; });
+    while(ev.spark1.length < 7){ ev.spark1.unshift(ev.spark1[0]||0); ev.spark2.unshift(ev.spark2[0]||0); }
+  }
+  // Update sidebar floor pill
+  var li = document.querySelector('.li[data-evkey="'+evKey+'"]');
+  if(li){ var fl=li.querySelector('.li-floor'); if(fl) fl.textContent = ev.floor ? '$'+ev.floor : '—'; }
+}
+
+function setEventStatus(evKey, msg) {
+  var el = document.getElementById('ev-counts');
+  if(!el) return;
+  var m = EV_MAPS[evKey]||{tevo:evKey,sg:''};
+  el.textContent = msg || ('TEvo #'+(m.tevo||evKey)+' · SG #'+(m.sg||'unmapped'));
 }
 
 // ── RENDER TEAM ─────────────────────────────────────────
