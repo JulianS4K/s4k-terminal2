@@ -1915,8 +1915,13 @@ function doPerfSearch(q){
   el.innerHTML = '<div class="pr-placeholder">Searching…</div>';
   jsonp(GAS_URL + '?action=performerSearch&q=' + encodeURIComponent(q) + '&fuzzy=true')
     .then(function(data){
-      if(!data.ok || !data.performers || !data.performers.length){
-        el.innerHTML = '<div class="pr-placeholder">No performers found for "'+q+'"</div>';
+      if(!data.ok){
+        el.innerHTML = '<div class="pr-placeholder" style="color:var(--red)">Error: '+(data.error||'unknown')+'</div>';
+        return;
+      }
+      if(!data.performers || !data.performers.length){
+        var debug = data._keys ? '<br><span style="color:var(--text3);font-size:9px">TEvo keys: '+data._keys+' status:'+data._status+'</span>' : '';
+        el.innerHTML = '<div class="pr-placeholder">No performers found for "'+q+'"'+debug+'</div>';
         return;
       }
       data.performers.forEach(function(p){ perfResultCache[String(p.id)] = p; });
