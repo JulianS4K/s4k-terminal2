@@ -638,7 +638,7 @@ function renderTeam(key){
       </div>
       <canvas id="pattern-chart-canvas"></canvas>
     </div>
-  </div>\`;
+  </div>`;
   // Build synthetic agg event data for chart
   const synthEvt={tevo:aggT,sg:aggS,spark1:extendSeries(evDocs[0].spark1,7),spark2:extendSeries(evDocs[0].spark2,7),team:key};
   setTimeout(()=>initPatternChart(synthEvt),80);
@@ -699,7 +699,7 @@ function renderVenue(key){
       </div>
       <canvas id="pattern-chart-canvas"></canvas>
     </div>
-  </div>\`;
+  </div>`;
   // Synth event data for venue chart
   const venueSynth={tevo:v.tevo,sg:v.sg,spark1:extendSeries(evDocs[0]?.spark1||[200,198,196,195,194,193,192],7),spark2:extendSeries(evDocs[0]?.spark2||[400,420,440,460,480,495,512],7),team:null};
   setTimeout(()=>initPatternChart(venueSynth),80);
