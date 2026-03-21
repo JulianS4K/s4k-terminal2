@@ -630,29 +630,56 @@ function renderEvent(key){
 
 function fetchAndLoadSnapHistory(evKey, tevoId) {
   var ev = EV[evKey]; if(!ev) return;
-  var url = GAS_URL + '?action=history&event_id=' + encodeURIComponent(tevoId);
-  jsonp(url).then(function(data){
+  var sgId = (EV_MAPS[evKey]||{}).sg || '';
+  var rendered = false;
+
+  function renderOnce() {
+    // Only render after both TEvo and SG have responded (or one failed)
+    if(lastEventKey !== evKey) return;
+    if(!rendered){ rendered=true; renderEvent(evKey); }
+  }
+
+  // TEvo history
+  var teUrl = GAS_URL + '?action=history&event_id=' + encodeURIComponent(tevoId);
+  jsonp(teUrl).then(function(data){
     if(data.rows && data.rows.length > 0) {
       ev._snapHistory = data.rows;
       var snap = data.rows[data.rows.length - 1];
-      // Build 7-day sparklines from history
       var recent = data.rows.slice(-7);
       while(recent.length < 7) recent.unshift(recent[0]||{floor:0,count:0});
       ev.spark1 = recent.map(function(r){ return r.floor||0; });
       ev.spark2 = recent.map(function(r){ return r.count||0; });
-      applyPricingToEvent(evKey, {
-        floor:  snap.floor,
-        avg:    snap.avg,
-        median: snap.median,
-        max:    snap.max,
-        count:  snap.count || snap.tickets_avail
-      }, null, snap.snapshot_ts);
-      if(lastEventKey === evKey) renderEvent(evKey);
+      // Only overwrite if cached event_index values are zero
+      if(!ev.floor) {
+        applyPricingToEvent(evKey, {floor:snap.floor,avg:snap.avg,median:snap.median,max:snap.max,count:snap.count||snap.tickets_avail}, null);
+      } else {
+        // Update sparklines only — pricing already seeded from event_index cache
+        ev.tevo = {floor:snap.floor||ev.floor, avg:snap.avg||ev.avg, median:snap.median||ev.median, max:snap.max||ev.max, ct:snap.count||ev.count};
+      }
+      renderOnce();
     } else if(!ev.floor) {
-      // No history — go live
       fetchLiveTevo(evKey, tevoId);
+    } else {
+      renderOnce();
     }
-  }).catch(function(){ if(!ev.floor) fetchLiveTevo(evKey, tevoId); });
+  }).catch(function(){ if(!ev.floor) fetchLiveTevo(evKey, tevoId); else renderOnce(); });
+
+  // SG history (parallel — don't block TEvo render)
+  if(sgId) {
+    var sgUrl = GAS_URL + '?action=sg_history&event_id=' + encodeURIComponent(tevoId);
+    jsonp(sgUrl).then(function(data){
+      if(data.rows && data.rows.length > 0) {
+        ev._sgHistory = data.rows;
+        var snap = data.rows[data.rows.length - 1];
+        // Only update if not already seeded from event_index
+        if(!ev.sg || !ev.sg.floor) {
+          ev.sg = {floor:snap.floor||0, avg:snap.avg||0, median:snap.median||0, max:snap.max||0, ct:snap.count||0};
+        }
+        // Re-render only if TEvo render already fired (no double-blink)
+        if(rendered && lastEventKey===evKey) renderEvent(evKey);
+      }
+    }).catch(function(){});
+  }
 }
 
 function fetchLivePricing(evKey, tevoId) {
@@ -2183,7 +2210,7 @@ function buildSidebar(events) {
     var evDate = ev.occurs_at_local || ev.event_date || '';
     var days = evDate ? Math.round((new Date(evDate) - now) / 86400000) : null;
 
-    // Register in EV map for renderEvent()
+    // Register in EV map — seed with cached values from event_index
     EV[key] = {
       title:   ev.event_name || ('Event ' + key),
       date:    evDate ? evDate.substring(0,10) : '—',
@@ -2191,13 +2218,16 @@ function buildSidebar(events) {
       pill:    days!==null ? days+'D OUT' : '—',
       pillCls: days===null?'far':days<=3?'soon':days<=14?'near':'far',
       days:    days,
-      floor:   ev.tevo_floor||0, avg:0, median:0, max:0,
+      floor:   ev.tevo_floor||0,
+      avg:     ev.tevo_avg||0,
+      median:  ev.tevo_median||0,
+      max:     ev.tevo_max||0,
       count:   ev.tevo_count||0,
-      tevo:    {floor:ev.tevo_floor||0,avg:0,median:0,max:0,ct:ev.tevo_count||0},
-      sg:      ev.sg_floor?{floor:ev.sg_floor,avg:0,median:0,max:0,ct:0}:null,
+      tevo:    {floor:ev.tevo_floor||0, avg:ev.tevo_avg||0, median:ev.tevo_median||0, max:ev.tevo_max||0, ct:ev.tevo_count||0},
+      sg:      ev.sg_floor ? {floor:ev.sg_floor, avg:ev.sg_avg||0, median:ev.sg_median||0, max:ev.sg_max||0, ct:ev.sg_count||0} : null,
       gt:null, spark1:[0,0,0,0,0,0,0], spark2:[0,0,0,0,0,0,0], team:null
     };
-    EV_MAPS[key] = EV_MAPS[key] || {tevo:key, sg:'', gt:''};
+    EV_MAPS[key] = EV_MAPS[key] || {tevo:key, sg: ev.sg_event_id||'', gt:''};
     trackedIds.add(key);
     liveEvents[key] = ev;
 
