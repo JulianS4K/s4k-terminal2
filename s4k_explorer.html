@@ -228,13 +228,13 @@ canvas.sp{width:100%;height:44px;display:block;min-height:44px}
 .cf-btn.count-sg{border-color:#1a8a60;color:#1a8a60;background:transparent}.cf-btn.count-sg.on{background:#081f15}
 .cf-btn.kalshi{border-color:var(--purple);color:var(--purple);background:transparent}.cf-btn.kalshi.on{background:var(--purple-dim)}
 .cf-btn.espn-rank{border-color:#6eb5f5;color:#6eb5f5;background:transparent}.cf-btn.espn-rank.on{background:#0a1520}
-.chart-wrap{background:var(--bg1);border:1px solid var(--border);border-radius:3px;padding:10px 12px}
+.chart-wrap{background:var(--bg1);border:1px solid var(--border);border-radius:3px;padding:10px 12px;position:relative;height:220px}
 .chart-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .chart-title-txt{font-size:9px;letter-spacing:.1em;color:var(--text2)}
 .chart-range{display:flex;gap:4px}
 .cr-btn{font-size:9px;padding:2px 7px;border-radius:2px;cursor:pointer;border:1px solid var(--border2);color:var(--text2);background:transparent;font-family:var(--mono);transition:all .15s}
 .cr-btn:hover{background:var(--bg2)}.cr-btn.active{background:var(--bg3);color:var(--text);border-color:var(--border2)}
-#pattern-chart-canvas{width:100%;height:200px;display:block;min-height:200px}
+#pattern-chart-canvas{position:absolute;inset:10px 12px 10px 12px;width:calc(100% - 24px)!important;height:calc(100% - 20px)!important}
 ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -608,7 +608,40 @@ function renderTeam(key){
       <div style="margin-top:8px"><div class="slabel">ROSTER — INJURY FLAGS <span class="src src-espn">ESPN</span></div>
       <div class="roster-grid">${rosterHtml}</div></div>
     </div>
-  </div>`;
+  </div>
+  <div>
+    <div class="slabel">PATTERN CHART — AGGREGATE ACROSS EVENTS</div>
+    <div class="chart-filters">
+      <span class="cf-label">PRICE:</span>
+      <button class="cf-btn tevo-floor on" onclick="toggleSeries(this,'tevo-floor')">TE Floor</button>
+      <button class="cf-btn tevo-avg" onclick="toggleSeries(this,'tevo-avg')">TE Avg</button>
+      <button class="cf-btn tevo-med" onclick="toggleSeries(this,'tevo-med')">TE Median</button>
+      <button class="cf-btn sg-floor on" onclick="toggleSeries(this,'sg-floor')">SG Floor</button>
+      <button class="cf-btn sg-avg" onclick="toggleSeries(this,'sg-avg')">SG Avg</button>
+      <span style="width:1px;height:14px;background:var(--border2);display:inline-block;margin:0 4px"></span>
+      <span class="cf-label">COUNT:</span>
+      <button class="cf-btn count-te on" onclick="toggleSeries(this,'count-te')">TE Count</button>
+      <button class="cf-btn count-sg" onclick="toggleSeries(this,'count-sg')">SG Count</button>
+      <span style="width:1px;height:14px;background:var(--border2);display:inline-block;margin:0 4px"></span>
+      <span class="cf-label">CONTEXT:</span>
+      <button class="cf-btn kalshi on" onclick="toggleSeries(this,'kalshi')">Kalshi %</button>
+      <button class="cf-btn espn-rank" onclick="toggleSeries(this,'espn-rank')">ESPN Rank</button>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-head">
+        <span class="chart-title-txt" id="chart-range-lbl">LAST 7 DAYS</span>
+        <div class="chart-range">
+          <button class="cr-btn active" onclick="setRange(this,7)">7D</button>
+          <button class="cr-btn" onclick="setRange(this,14)">14D</button>
+          <button class="cr-btn" onclick="setRange(this,30)">30D</button>
+        </div>
+      </div>
+      <canvas id="pattern-chart-canvas"></canvas>
+    </div>
+  </div>\`;
+  // Build synthetic agg event data for chart
+  const synthEvt={tevo:aggT,sg:aggS,spark1:extendSeries(evDocs[0].spark1,7),spark2:extendSeries(evDocs[0].spark2,7),team:key};
+  setTimeout(()=>initPatternChart(synthEvt),80);
 }
 
 // ── RENDER VENUE ────────────────────────────────────────
@@ -640,13 +673,55 @@ function renderVenue(key){
   </div></div>
   <div><div class="slabel">EVENTS AT THIS VENUE</div>
   <table class="etable"><thead><tr><th>Event</th><th>Date</th><th class="num">TE Floor</th><th class="num">Median</th><th class="num">Max</th><th class="num">SG Floor</th><th class="num">Listings</th></tr></thead>
-  <tbody>${evDocs.map(e=>`<tr><td>${e.title.substring(0,30)}…</td><td>${e.date.split('·')[0].trim()}</td><td class="num amber">${fmt(e.tevo.floor)}</td><td class="num">${fmt(e.tevo.median)}</td><td class="num red">${fmt(e.tevo.max)}</td><td class="num blue">${e.sg?fmt(e.sg.floor):'—'}</td><td class="num green">${fmtN(e.tevo.ct)}</td></tr>`).join('')}</tbody></table></div>`;
+  <tbody>${evDocs.map(e=>`<tr><td>${e.title.substring(0,30)}…</td><td>${e.date.split('·')[0].trim()}</td><td class="num amber">${fmt(e.tevo.floor)}</td><td class="num">${fmt(e.tevo.median)}</td><td class="num red">${fmt(e.tevo.max)}</td><td class="num blue">${e.sg?fmt(e.sg.floor):'—'}</td><td class="num green">${fmtN(e.tevo.ct)}</td></tr>`).join('')}</tbody></table></div>
+  <div>
+    <div class="slabel">PATTERN CHART — VENUE AGGREGATE</div>
+    <div class="chart-filters">
+      <span class="cf-label">PRICE:</span>
+      <button class="cf-btn tevo-floor on" onclick="toggleSeries(this,'tevo-floor')">TE Floor</button>
+      <button class="cf-btn tevo-avg" onclick="toggleSeries(this,'tevo-avg')">TE Avg</button>
+      <button class="cf-btn tevo-med" onclick="toggleSeries(this,'tevo-med')">TE Median</button>
+      <button class="cf-btn sg-floor on" onclick="toggleSeries(this,'sg-floor')">SG Floor</button>
+      <button class="cf-btn sg-avg" onclick="toggleSeries(this,'sg-avg')">SG Avg</button>
+      <span style="width:1px;height:14px;background:var(--border2);display:inline-block;margin:0 4px"></span>
+      <span class="cf-label">COUNT:</span>
+      <button class="cf-btn count-te on" onclick="toggleSeries(this,'count-te')">TE Count</button>
+      <button class="cf-btn count-sg" onclick="toggleSeries(this,'count-sg')">SG Count</button>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-head">
+        <span class="chart-title-txt" id="chart-range-lbl">LAST 7 DAYS</span>
+        <div class="chart-range">
+          <button class="cr-btn active" onclick="setRange(this,7)">7D</button>
+          <button class="cr-btn" onclick="setRange(this,14)">14D</button>
+          <button class="cr-btn" onclick="setRange(this,30)">30D</button>
+        </div>
+      </div>
+      <canvas id="pattern-chart-canvas"></canvas>
+    </div>
+  </div>\`;
+  // Synth event data for venue chart
+  const venueSynth={tevo:v.tevo,sg:v.sg,spark1:extendSeries(evDocs[0]?.spark1||[200,198,196,195,194,193,192],7),spark2:extendSeries(evDocs[0]?.spark2||[400,420,440,460,480,495,512],7),team:null};
+  setTimeout(()=>initPatternChart(venueSynth),80);
 }
 
 // ── SELECTION ───────────────────────────────────────────
+var lastViewType='ev', lastEventKey='wsh-nyk', lastTeamKey=null, lastVenueKey=null;
+var activeTab='pricing';
+
 function sel(el,type,key){
   document.querySelectorAll('.li').forEach(e=>e.classList.remove('active','active-team','active-venue'));
   el.classList.add(type==='ev'?'active':type==='team'?'active-team':'active-venue');
+  lastViewType=type;
+  if(type==='ev')    lastEventKey=key;
+  if(type==='team')  lastTeamKey=key;
+  if(type==='venue') lastVenueKey=key;
+  var showSrc=(type!=='venue');
+  document.getElementById('tab-tevo').style.display=showSrc?'flex':'none';
+  document.getElementById('tab-kalshi').style.display=showSrc?'flex':'none';
+  document.querySelectorAll('#tabs .tab').forEach(function(t){t.classList.remove('active');});
+  document.querySelector('#tabs .tab').classList.add('active');
+  activeTab='pricing';
   if(type==='ev')    renderEvent(key);
   if(type==='team')  renderTeam(key);
   if(type==='venue') renderVenue(key);
@@ -1035,30 +1110,6 @@ function setRange(btn,days){
 
 
 // ── TAB SWITCHING ────────────────────────────────────────
-let activeTab = 'pricing';
-let lastEventKey = 'wsh-nyk';
-let lastTeamKey = null;
-let lastVenueKey = null;
-let lastViewType = 'ev';
-
-// Patch sel() to track current selection
-const _origSel = sel;
-function sel(el,type,key){
-  lastViewType=type;
-  if(type==='ev')lastEventKey=key;
-  if(type==='team')lastTeamKey=key;
-  if(type==='venue')lastVenueKey=key;
-  // Show/hide TEvo and Kalshi tabs — only relevant for events and teams
-  document.getElementById('tab-tevo').style.display = (type==='ev'||type==='team') ? 'flex' : 'none';
-  document.getElementById('tab-kalshi').style.display = (type==='ev'||type==='team') ? 'flex' : 'none';
-  // Reset to pricing tab on selection change
-  if(activeTab !== 'pricing'){
-    document.querySelectorAll('#tabs .tab').forEach(t=>t.classList.remove('active'));
-    document.querySelector('#tabs .tab').classList.add('active');
-    activeTab='pricing';
-  }
-  _origSel(el,type,key);
-}
 
 function switchTab(tab, btn){
   document.querySelectorAll('#tabs .tab').forEach(t=>t.classList.remove('active'));
@@ -1069,13 +1120,14 @@ function switchTab(tab, btn){
     else if(lastViewType==='team')renderTeam(lastTeamKey);
     else renderVenue(lastVenueKey);
   } else if(tab==='tevo'){
-    renderTevoTab();
+    if(lastViewType==='venue') renderVenueTevoTab();
+    else renderTevoTab();
   } else if(tab==='kalshi'){
     renderKalshiTab();
   } else if(tab==='history'){
-    renderPlaceholderTab('HISTORY','Historical snapshots — coming soon. Will show per-event price deltas over time.');
+    renderHistoryTab();
   } else if(tab==='alerts'){
-    renderPlaceholderTab('ALERTS','Alert configuration — coming soon. Set floor thresholds and count velocity triggers.');
+    renderAlertsTab();
   }
 }
 
@@ -1208,7 +1260,7 @@ function renderKalshiTab(){
     <div>
       <div class="slabel">ODDS TREND — 7D <span class="src src-kalshi">KALSHI</span></div>
       <div class="chart-wrap">
-        <canvas id="kalshi-chart-canvas" style="width:100%;height:180px;display:block;min-height:180px"></canvas>
+        <div style="position:relative;height:180px"><canvas id="kalshi-chart-canvas" style="position:absolute;inset:0;width:100%!important;height:100%!important"></canvas></div>
       </div>
       <div style="margin-top:10px">
         <div class="slabel">HOW TO READ</div>
@@ -1245,6 +1297,217 @@ function renderKalshiTab(){
       }
     });
   },80);
+}
+
+
+// ── HISTORY TAB ───────────────────────────────────────────
+function renderHistoryTab(){
+  const evKey = lastViewType==='team' ? TEAMS[lastTeamKey]?.events[0] : lastViewType==='venue' ? VENUES[lastVenueKey]?.events[0] : lastEventKey;
+  const d = EV[evKey||'wsh-nyk'];
+  const tm = d?.team ? TEAMS[d.team] : null;
+
+  // Generate 30d of synthetic history
+  const n=30;
+  const labels=genDays(n);
+  const teFloors=extendSeries(d.spark1,n);
+  const teCounts=extendSeries(d.spark2,n);
+  const sgFloors=d.sg?extendSeries(d.spark1.map(v=>Math.round(v*d.sg.floor/d.tevo.floor)),n):null;
+
+  // Delta table — day-over-day changes
+  const deltas=teFloors.slice(-7).map((v,i,arr)=>{
+    const prev=i>0?arr[i-1]:v;
+    const chg=v-prev;
+    const day=new Date();day.setDate(day.getDate()-(6-i));
+    return{date:day.toLocaleDateString('en-US',{month:'short',day:'numeric'}),floor:v,chg,pct:prev?((chg/prev)*100).toFixed(1):0,ct:teCounts.slice(-7)[i]};
+  }).reverse();
+
+  $('content').innerHTML=`
+  <div>
+    <div class="slabel">PRICE HISTORY — 30 DAYS</div>
+    <div class="chart-wrap">
+      <div class="chart-head">
+        <span class="chart-title-txt">FLOOR & COUNT TREND</span>
+        <div class="chart-range">
+          <button class="cr-btn active" onclick="setHistRange(this,7,teFloors30,sgFloors30,teCounts30,labels30)">7D</button>
+          <button class="cr-btn" onclick="setHistRange(this,14,teFloors30,sgFloors30,teCounts30,labels30)">14D</button>
+          <button class="cr-btn" onclick="setHistRange(this,30,teFloors30,sgFloors30,teCounts30,labels30)">30D</button>
+        </div>
+      </div>
+      <canvas id="hist-chart" style="width:100%;height:180px;display:block;min-height:180px"></canvas>
+    </div>
+  </div>
+  <div class="ctx2">
+    <div>
+      <div class="slabel">DAY-OVER-DAY DELTAS — LAST 7 DAYS</div>
+      <table class="etable">
+        <thead><tr><th>Date</th><th class="num">TE Floor</th><th class="num">Δ</th><th class="num">Δ%</th><th class="num">TE Count</th></tr></thead>
+        <tbody>${deltas.map(r=>`<tr>
+          <td>${r.date}</td>
+          <td class="num amber">${fmt(r.floor)}</td>
+          <td class="num ${r.chg>0?'green':r.chg<0?'red':'dim'}">${r.chg>0?'+':''}${r.chg===0?'—':fmt(Math.abs(r.chg))}</td>
+          <td class="num ${r.chg>0?'green':r.chg<0?'red':'dim'}">${r.chg===0?'—':(r.chg>0?'+':'')+r.pct+'%'}</td>
+          <td class="num green">${fmtN(r.ct)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    <div>
+      <div class="slabel">PRICE DISTRIBUTION SNAPSHOTS</div>
+      <div class="ccard">
+        ${['7d ago','5d ago','3d ago','Yesterday','Today'].map((lbl,i)=>{
+          const f=teFloors[n-5+i];
+          const pct=i>0?((f-teFloors[n-5])/teFloors[n-5]*100).toFixed(1):0;
+          return`<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+            <span style="font-size:9px;color:var(--text2);width:60px">${lbl}</span>
+            <div style="flex:1;height:5px;background:var(--bg3);border-radius:2px;overflow:hidden">
+              <div style="width:${Math.min(100,(f/d.tevo.max)*100)}%;height:100%;background:var(--amber);border-radius:2px"></div>
+            </div>
+            <span style="font-size:10px;font-weight:500;color:var(--amber);width:42px;text-align:right">${fmt(f)}</span>
+            <span style="font-size:9px;width:40px;text-align:right;color:${i===0?'var(--text2)':pct>0?'var(--red)':'var(--green)'}">${i===0?'—':(pct>0?'+':'')+pct+'%'}</span>
+          </div>`;
+        }).join('')}
+        <div style="font-size:9px;color:var(--text3);margin-top:6px;border-top:1px solid var(--border);padding-top:6px">Bar width = price relative to max listing</div>
+      </div>
+    </div>
+  </div>`;
+
+  // Store for range buttons
+  window.teFloors30=teFloors;window.sgFloors30=sgFloors;window.teCounts30=teCounts;window.labels30=labels;
+  setTimeout(()=>renderHistChart(7,teFloors,sgFloors,teCounts,labels),80);
+}
+
+function renderHistChart(n,tf,sf,tc,labels){
+  const canvas=document.getElementById('hist-chart');
+  if(!canvas||typeof Chart==='undefined')return;
+  const sl=labels.slice(-n),stf=tf.slice(-n),stc=tc.slice(-n);
+  const ssf=sf?sf.slice(-n):null;
+  if(window._histChart)window._histChart.destroy();
+  window._histChart=new Chart(canvas,{
+    type:'line',
+    data:{labels:sl,datasets:[
+      {label:'TEvo Floor',data:stf,borderColor:'#f5a623',borderWidth:1.5,pointRadius:2,fill:false,tension:.3,yAxisID:'price'},
+      ...(ssf?[{label:'SG Floor',data:ssf,borderColor:'#4da3f5',borderWidth:1.5,pointRadius:2,fill:false,tension:.3,yAxisID:'price'}]:[]),
+      {label:'TE Count',data:stc,borderColor:'#3dd68c',borderWidth:1.5,pointRadius:2,fill:false,tension:.3,yAxisID:'count'},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,animation:{duration:200},
+      plugins:{legend:{display:true,labels:{color:'#596060',font:{family:'IBM Plex Mono',size:9},boxWidth:12,padding:10}},
+        tooltip:{backgroundColor:'#1c1f1f',borderColor:'#2a2f2f',borderWidth:1,titleColor:'#596060',bodyColor:'#bec8c8',titleFont:{family:'IBM Plex Mono',size:9},bodyFont:{family:'IBM Plex Mono',size:10}}},
+      scales:{
+        x:{grid:{color:'#222626',lineWidth:.5},ticks:{color:'#596060',font:{family:'IBM Plex Mono',size:9},maxTicksLimit:7}},
+        price:{type:'linear',position:'left',grid:{color:'#222626',lineWidth:.5},ticks:{color:'#f5a623',font:{family:'IBM Plex Mono',size:9},callback:v=>'$'+v.toLocaleString()}},
+        count:{type:'linear',position:'right',grid:{display:false},ticks:{color:'#3dd68c',font:{family:'IBM Plex Mono',size:9}}}
+      }}
+  });
+}
+
+function setHistRange(btn,n,tf,sf,tc,lbl){
+  document.querySelectorAll('#content .cr-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderHistChart(n,tf,sf,tc,lbl);
+}
+
+// ── ALERTS TAB ────────────────────────────────────────────
+function renderAlertsTab(){
+  const evKey = lastViewType==='team' ? TEAMS[lastTeamKey]?.events[0] : lastViewType==='venue' ? VENUES[lastVenueKey]?.events[0] : lastEventKey;
+  const d = EV[evKey||'wsh-nyk'];
+  const savedAlerts=[
+    {type:'floor_drop',label:'Floor drop alert',threshold:'$110',direction:'below',status:'active',last:'—'},
+    {type:'count_surge',label:'Listing surge',threshold:'300',direction:'above',status:'active',last:'2h ago'},
+    {type:'spread_widen',label:'TE/SG spread widens',threshold:'20%',direction:'above',status:'paused',last:'—'},
+  ];
+  const alertRows=savedAlerts.map(a=>`<tr>
+    <td>${a.label}</td>
+    <td><span style="font-size:9px;padding:1px 5px;border-radius:2px;background:var(--bg3);color:var(--text2)">${a.type.replace('_',' ').toUpperCase()}</span></td>
+    <td class="num amber">${a.threshold} ${a.direction}</td>
+    <td><span style="font-size:9px;padding:1px 5px;border-radius:2px;background:${a.status==='active'?'var(--green-dim)':'var(--bg3)'};color:${a.status==='active'?'var(--green)':'var(--text2)'}">${a.status.toUpperCase()}</span></td>
+    <td style="color:var(--text2);font-size:10px">${a.last}</td>
+  </tr>`).join('');
+
+  $('content').innerHTML=`
+  <div>
+    <div class="slabel">ACTIVE ALERTS — THIS EVENT</div>
+    <table class="etable">
+      <thead><tr><th>Alert</th><th>Type</th><th class="num">Threshold</th><th>Status</th><th>Last Fired</th></tr></thead>
+      <tbody>${alertRows}</tbody>
+    </table>
+  </div>
+  <div class="ctx2">
+    <div>
+      <div class="slabel">ADD NEW ALERT</div>
+      <div class="ccard">
+        <div style="margin-bottom:10px">
+          <div style="font-size:9px;color:var(--text2);margin-bottom:5px;letter-spacing:.06em">ALERT TYPE</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${['Floor Drop','Floor Rise','Count Surge','Count Drop','Spread Widen','Spread Narrow'].map(t=>`<button style="font-size:9px;padding:3px 8px;border-radius:2px;border:1px solid var(--border2);background:transparent;color:var(--text2);cursor:pointer;font-family:var(--mono)" onmouseover="this.style.borderColor='var(--amber)';this.style.color='var(--amber)'" onmouseout="this.style.borderColor='var(--border2)';this.style.color='var(--text2)'">${t}</button>`).join('')}
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+          <div>
+            <div style="font-size:9px;color:var(--text2);margin-bottom:4px;letter-spacing:.06em">THRESHOLD VALUE</div>
+            <input style="width:100%;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:11px;padding:5px 8px;border-radius:2px;outline:none" placeholder="e.g. 110" value="${d.tevo.floor}">
+          </div>
+          <div>
+            <div style="font-size:9px;color:var(--text2);margin-bottom:4px;letter-spacing:.06em">NOTIFY VIA</div>
+            <select style="width:100%;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:11px;padding:5px 8px;border-radius:2px;outline:none">
+              <option>Slack</option><option>Email</option><option>Both</option>
+            </select>
+          </div>
+        </div>
+        <button style="font-size:9px;font-weight:600;letter-spacing:.07em;padding:5px 14px;border-radius:2px;background:var(--amber-dim);color:var(--amber);border:1px solid var(--amber);cursor:pointer;font-family:var(--mono)">+ CREATE ALERT</button>
+      </div>
+    </div>
+    <div>
+      <div class="slabel">ALERT THRESHOLDS — CONTEXT</div>
+      <div class="ccard">
+        <div style="font-size:9px;color:var(--text2);margin-bottom:10px">Current market reference points:</div>
+        ${[
+          ['TEvo floor now', fmt(d.tevo.floor), 'var(--amber)'],
+          ['TEvo floor −10%', fmt(Math.round(d.tevo.floor*.9)), 'var(--text2)'],
+          ['TEvo floor −20%', fmt(Math.round(d.tevo.floor*.8)), 'var(--red)'],
+          ['TEvo avg now', fmt(d.tevo.avg), 'var(--text)'],
+          ['Listing count now', fmtN(d.tevo.ct), 'var(--green)'],
+          ['Count +50%', fmtN(Math.round(d.tevo.ct*1.5)), 'var(--text2)'],
+        ].map(([lbl,val,col])=>`<div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:10px">
+          <span style="color:var(--text2)">${lbl}</span>
+          <span style="color:${col};font-weight:500">${val}</span>
+        </div>`).join('')}
+        <div style="font-size:9px;color:var(--text3);margin-top:8px;border-top:1px solid var(--border);padding-top:6px">Alerts fire via GAS trigger → Slack webhook</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── VENUE TEVO TAB ────────────────────────────────────────
+function renderVenueTevoTab(){
+  const v=VENUES[lastVenueKey];if(!v)return;
+  const evDocs=Object.values(EV).filter(e=>e.venue&&e.venue.includes(v.name.split(' ')[0]));
+  const t=v.tevo,s=v.sg;
+  $('content').innerHTML=`
+  <div>
+    <div class="slabel">TEVO — VENUE AGGREGATE <span class="src src-tevo">TEVO</span></div>
+    <div class="mrow">
+      <div class="mcard"><div class="mc-lbl">FLOOR</div><div class="mc-val amber">${fmt(t.floor)}</div><div class="mc-sub">min ask</div></div>
+      <div class="mcard"><div class="mc-lbl">MEDIAN</div><div class="mc-val">${fmt(t.median)}</div><div class="mc-sub">midpoint</div></div>
+      <div class="mcard"><div class="mc-lbl">AVERAGE</div><div class="mc-val">${fmt(t.avg)}</div><div class="mc-sub">weighted</div></div>
+      <div class="mcard"><div class="mc-lbl">MAX</div><div class="mc-val red">${fmt(v.agg.max)}</div><div class="mc-sub">ceiling</div></div>
+      <div class="mcard"><div class="mc-lbl">LISTINGS</div><div class="mc-val green">${fmtN(t.ct)}</div><div class="mc-sub">total</div></div>
+    </div>
+  </div>
+  <div>
+    <div class="slabel">PER-EVENT TEVO DETAIL</div>
+    <table class="etable">
+      <thead><tr><th>Event</th><th>Date</th><th class="num">Floor</th><th class="num">Median</th><th class="num">Avg</th><th class="num">Max</th><th class="num">Count</th></tr></thead>
+      <tbody>${evDocs.map(e=>`<tr>
+        <td>${e.title.substring(0,28)}…</td>
+        <td>${e.date.split('·')[0].trim()}</td>
+        <td class="num amber">${fmt(e.tevo.floor)}</td>
+        <td class="num">${fmt(e.tevo.median)}</td>
+        <td class="num">${fmt(e.tevo.avg)}</td>
+        <td class="num red">${fmt(e.tevo.max)}</td>
+        <td class="num green">${fmtN(e.tevo.ct)}</td>
+      </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
 }
 
 function renderPlaceholderTab(title,msg){
