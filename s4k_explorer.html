@@ -213,8 +213,31 @@ canvas.sp{width:100%;height:44px;display:block}
 .sb-lbl{font-size:9px;color:var(--text2)}
 .sb-val{font-size:15px;font-weight:500;font-family:var(--mono)}
 
+
+/* PATTERN CHART */
+.chart-filters{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;align-items:center}
+.cf-label{font-size:9px;letter-spacing:.08em;color:var(--text2);margin-right:4px}
+.cf-btn{font-size:9px;font-weight:500;letter-spacing:.05em;padding:3px 9px;border-radius:2px;cursor:pointer;border:1px solid;transition:all .15s;font-family:var(--mono);opacity:.45}
+.cf-btn.on{opacity:1}
+.cf-btn.tevo-floor{border-color:var(--amber);color:var(--amber);background:transparent}.cf-btn.tevo-floor.on{background:var(--amber-dim)}
+.cf-btn.tevo-avg{border-color:#c4831a;color:#c4831a;background:transparent}.cf-btn.tevo-avg.on{background:#2a1e08}
+.cf-btn.tevo-med{border-color:#8a5d12;color:#8a5d12;background:transparent}.cf-btn.tevo-med.on{background:#1e160a}
+.cf-btn.sg-floor{border-color:var(--blue);color:var(--blue);background:transparent}.cf-btn.sg-floor.on{background:var(--blue-dim)}
+.cf-btn.sg-avg{border-color:#2e6db5;color:#2e6db5;background:transparent}.cf-btn.sg-avg.on{background:#0a1a2e}
+.cf-btn.count-te{border-color:var(--green);color:var(--green);background:transparent}.cf-btn.count-te.on{background:var(--green-dim)}
+.cf-btn.count-sg{border-color:#1a8a60;color:#1a8a60;background:transparent}.cf-btn.count-sg.on{background:#081f15}
+.cf-btn.kalshi{border-color:var(--purple);color:var(--purple);background:transparent}.cf-btn.kalshi.on{background:var(--purple-dim)}
+.cf-btn.espn-rank{border-color:#6eb5f5;color:#6eb5f5;background:transparent}.cf-btn.espn-rank.on{background:#0a1520}
+.chart-wrap{background:var(--bg1);border:1px solid var(--border);border-radius:3px;padding:10px 12px}
+.chart-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.chart-title-txt{font-size:9px;letter-spacing:.1em;color:var(--text2)}
+.chart-range{display:flex;gap:4px}
+.cr-btn{font-size:9px;padding:2px 7px;border-radius:2px;cursor:pointer;border:1px solid var(--border2);color:var(--text2);background:transparent;font-family:var(--mono);transition:all .15s}
+.cr-btn:hover{background:var(--bg2)}.cr-btn.active{background:var(--bg3);color:var(--text);border-color:var(--border2)}
+#pattern-chart-canvas{width:100%;height:200px;display:block}
 ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
 
@@ -339,15 +362,16 @@ canvas.sp{width:100%;height:44px;display:block}
 <div id="right">
   <div class="phead"><span>◈</span> MARKET FEED</div>
   <div class="flist">
-    <div class="fi"><span class="fi-src fsrc-t">TEVO</span><div class="fi-title">WSH@NYK floor refreshed</div><div class="fi-d up">Floor $130 · 204 listings</div><div class="fi-t">2m ago</div></div>
-    <div class="fi"><span class="fi-src fsrc-k">KALSHI</span><div class="fi-title">NYK odds updated</div><div class="fi-d dim">4% — unchanged</div><div class="fi-t">38m ago</div></div>
-    <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">Knicks on 5-game win streak</div><div class="fi-t">1h ago</div></div>
-    <div class="fi"><span class="fi-src fsrc-t">TEVO</span><div class="fi-title">LAL@GSW updated</div><div class="fi-d dn">Floor $208 · 300 listings</div><div class="fi-t">2h ago</div></div>
-    <div class="fi"><span class="fi-src fsrc-s">SEATGEEK</span><div class="fi-title">LAL@GSW snapshot</div><div class="fi-d up">$234 floor · 2,383 listings</div><div class="fi-t">2h ago</div></div>
-    <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">Warriors drop to 33-37 after back-to-back losses</div><div class="fi-t">4h ago</div></div>
-    <div class="fi"><span class="fi-src fsrc-k">KALSHI</span><div class="fi-title">GSW championship odds</div><div class="fi-d dim">0% — no change</div><div class="fi-t">1h ago</div></div>
-    <div class="fi"><span class="fi-src fsrc-t">TEVO</span><div class="fi-title">Play-In TBD@MSG active</div><div class="fi-d up">Floor $220 · 335 listings</div><div class="fi-t">8h ago</div></div>
-    <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">Knicks clinch top-4 seed in Eastern Conference</div><div class="fi-t">Yesterday</div></div>
+    <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">Knicks remain on 5-game win streak heading into final stretch</div><div class="fi-t">1h ago · NBA</div></div>
+    <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">Warriors drop to 33-37 after consecutive losses at home</div><div class="fi-t">4h ago · NBA</div></div>
+    <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">OG Anunoby questionable for Sunday — knee soreness</div><div class="fi-t">5h ago · NBA</div></div>
+    <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">Knicks clinch top-4 seed in Eastern Conference</div><div class="fi-t">Yesterday · NBA</div></div>
+    <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">Steph Curry scores 38, Warriors avoid fourth straight loss</div><div class="fi-t">2 days ago · NBA</div></div>
+    <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">Karl-Anthony Towns posts double-double in Knicks win over Heat</div><div class="fi-t">2 days ago · NBA</div></div>
+    <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">Andrew Wiggins listed as questionable — ankle</div><div class="fi-t">3 days ago · NBA</div></div>
+    <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">NBA Play-In bracket: Knicks seeded 3rd in East</div><div class="fi-t">3 days ago · NBA</div></div>
+    <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">Formula 1: Canadian GP tickets moving fast after Verstappen drama</div><div class="fi-t">4 days ago · F1</div></div>
+    <div class="fi"><span class="fi-src fsrc-e">ESPN</span><div class="fi-title">Jalen Brunson quietly having best season of career</div><div class="fi-t">5 days ago · NBA</div></div>
   </div>
 </div>
 
@@ -501,8 +525,39 @@ function renderEvent(key){
   <div class="spark2g">
     <div class="scard"><div class="shead"><span class="stitle">TEVO FLOOR 7D</span><span class="sval amber">${fmt(t.floor)}</span></div><canvas class="sp" id="sp1"></canvas></div>
     <div class="scard"><div class="shead"><span class="stitle">LISTING COUNT 7D</span><span class="sval green">${fmtN(t.ct)}</span></div><canvas class="sp" id="sp2"></canvas></div>
+  </div>
+  <div>
+    <div class="slabel">PATTERN CHART — MULTI-SOURCE OVERLAY</div>
+    <div class="chart-filters">
+      <span class="cf-label">PRICE:</span>
+      <button class="cf-btn tevo-floor on" onclick="toggleSeries(this,'tevo-floor')">TE Floor</button>
+      <button class="cf-btn tevo-avg" onclick="toggleSeries(this,'tevo-avg')">TE Avg</button>
+      <button class="cf-btn tevo-med" onclick="toggleSeries(this,'tevo-med')">TE Median</button>
+      <button class="cf-btn sg-floor on" onclick="toggleSeries(this,'sg-floor')">SG Floor</button>
+      <button class="cf-btn sg-avg" onclick="toggleSeries(this,'sg-avg')">SG Avg</button>
+      <span style="width:1px;height:14px;background:var(--border2);display:inline-block;margin:0 4px"></span>
+      <span class="cf-label">COUNT:</span>
+      <button class="cf-btn count-te on" onclick="toggleSeries(this,'count-te')">TE Count</button>
+      <button class="cf-btn count-sg" onclick="toggleSeries(this,'count-sg')">SG Count</button>
+      <span style="width:1px;height:14px;background:var(--border2);display:inline-block;margin:0 4px"></span>
+      <span class="cf-label">CONTEXT:</span>
+      <button class="cf-btn kalshi on" onclick="toggleSeries(this,'kalshi')">Kalshi %</button>
+      <button class="cf-btn espn-rank" onclick="toggleSeries(this,'espn-rank')">ESPN Rank</button>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-head">
+        <span class="chart-title-txt" id="chart-range-lbl">LAST 7 DAYS</span>
+        <div class="chart-range">
+          <button class="cr-btn active" onclick="setRange(this,7)">7D</button>
+          <button class="cr-btn" onclick="setRange(this,14)">14D</button>
+          <button class="cr-btn" onclick="setRange(this,30)">30D</button>
+        </div>
+      </div>
+      <canvas id="pattern-chart-canvas"></canvas>
+    </div>
   </div>`;
   spark('sp1',d.spark1,'#f5a623');spark('sp2',d.spark2,'#3dd68c');
+  setTimeout(()=>initPatternChart(d),80);
 }
 
 // ── RENDER TEAM ─────────────────────────────────────────
@@ -848,6 +903,134 @@ setInterval(()=>{
   const next=Math.max(80,cur+(Math.random()>.5?1:-1)*Math.floor(Math.random()*4));
   if(next!==cur){el.textContent='$'+next;el.closest('.pc').classList.remove('flash');void el.closest('.pc').offsetWidth;el.closest('.pc').classList.add('flash');}
 },7000);
+
+// ── PATTERN CHART ───────────────────────────────────────
+let patternChart = null;
+let activeSeries = new Set(['tevo-floor','sg-floor','count-te','kalshi']);
+let currentRange = 7;
+let currentEventData = null;
+
+function genDays(n){
+  const labels=[];const now=new Date();
+  for(let i=n-1;i>=0;i--){const d=new Date(now);d.setDate(d.getDate()-i);labels.push(d.toLocaleDateString('en-US',{month:'short',day:'numeric'}));}
+  return labels;
+}
+function extendSeries(base,n){
+  if(base.length>=n)return base.slice(-n);
+  const out=[...base];
+  while(out.length<n){const last=out[0];const delta=(Math.random()-.4)*last*.02;out.unshift(Math.max(1,Math.round(last+delta)));}
+  return out;
+}
+
+function buildChartData(d,n){
+  const labels=genDays(n);
+  const tf=extendSeries(d.spark1,n);
+  const tc=extendSeries(d.spark2,n);
+  const ta=tf.map(v=>Math.round(v*d.tevo.avg/d.tevo.floor));
+  const tm_=tf.map(v=>Math.round(v*d.tevo.median/d.tevo.floor));
+  const sf=d.sg?extendSeries(d.sg?d.spark1.map(v=>Math.round(v*d.sg.floor/d.tevo.floor)):[],n):null;
+  const sa=d.sg?extendSeries(d.sg?d.spark1.map(v=>Math.round(v*d.sg.avg/d.tevo.floor)):[],n):null;
+  const sc=d.sg?extendSeries(d.spark2.map(v=>Math.round(v*d.sg.ct/d.tevo.ct)),n):null;
+  const kalshiArr=new Array(n).fill(d.team&&TEAMS[d.team]?TEAMS[d.team].kalshiPct:0);
+  const espnArr=d.team&&TEAMS[d.team]?new Array(n).fill(TEAMS[d.team].rank):null;
+  return{labels,tf,ta,tm_,sf,sa,sc,tc,kalshiArr,espnArr};
+}
+
+const SERIES_CFG={
+  'tevo-floor':{label:'TEvo Floor',color:'#f5a623',yAxis:'price',data:cd=>cd.tf},
+  'tevo-avg':  {label:'TEvo Avg',  color:'#c4831a',yAxis:'price',data:cd=>cd.ta},
+  'tevo-med':  {label:'TEvo Median',color:'#8a5d12',yAxis:'price',data:cd=>cd.tm_},
+  'sg-floor':  {label:'SG Floor',  color:'#4da3f5',yAxis:'price',data:cd=>cd.sf},
+  'sg-avg':    {label:'SG Avg',    color:'#2e6db5',yAxis:'price',data:cd=>cd.sa},
+  'count-te':  {label:'TE Count',  color:'#3dd68c',yAxis:'count',data:cd=>cd.tc},
+  'count-sg':  {label:'SG Count',  color:'#1a8a60',yAxis:'count',data:cd=>cd.sc},
+  'kalshi':    {label:'Kalshi %',  color:'#9b8ff5',yAxis:'pct',  data:cd=>cd.kalshiArr},
+  'espn-rank': {label:'ESPN Rank', color:'#6eb5f5',yAxis:'rank', data:cd=>cd.espnArr},
+};
+
+function initPatternChart(d){
+  const canvas=document.getElementById('pattern-chart-canvas');
+  if(!canvas)return;
+  canvas.style.height='200px';
+  if(patternChart){patternChart.destroy();patternChart=null;}
+  currentEventData=d;
+  buildAndRenderChart();
+}
+
+function buildAndRenderChart(){
+  const canvas=document.getElementById('pattern-chart-canvas');
+  if(!canvas||!currentEventData)return;
+  const d=currentEventData;
+  const cd=buildChartData(d,currentRange);
+  const datasets=[];
+  activeSeries.forEach(key=>{
+    const cfg=SERIES_CFG[key];if(!cfg)return;
+    const data=cfg.data(cd);if(!data)return;
+    const isCount=cfg.yAxis==='count';
+    const isPct=cfg.yAxis==='pct';
+    const isRank=cfg.yAxis==='rank';
+    datasets.push({
+      label:cfg.label,
+      data,
+      borderColor:cfg.color,
+      backgroundColor:cfg.color+'18',
+      borderWidth:1.5,
+      pointRadius:2,
+      pointHoverRadius:4,
+      fill:false,
+      tension:.3,
+      yAxisID:cfg.yAxis,
+    });
+  });
+  if(patternChart)patternChart.destroy();
+  patternChart=new Chart(canvas,{
+    type:'line',
+    data:{labels:cd.labels,datasets},
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      animation:{duration:300},
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'#1c1f1f',
+          borderColor:'#2a2f2f',
+          borderWidth:1,
+          titleColor:'#596060',
+          bodyColor:'#bec8c8',
+          titleFont:{family:'IBM Plex Mono',size:9},
+          bodyFont:{family:'IBM Plex Mono',size:10},
+          padding:8,
+        }
+      },
+      scales:{
+        x:{grid:{color:'#222626',lineWidth:.5},ticks:{color:'#596060',font:{family:'IBM Plex Mono',size:9},maxTicksLimit:7}},
+        price:{type:'linear',position:'left',grid:{color:'#222626',lineWidth:.5},ticks:{color:'#f5a623',font:{family:'IBM Plex Mono',size:9},callback:v=>'$'+v.toLocaleString()},title:{display:false},display:datasets.some(ds=>SERIES_CFG[Object.keys(SERIES_CFG).find(k=>SERIES_CFG[k].label===ds.label)]?.yAxis==='price')},
+        count:{type:'linear',position:'right',grid:{display:false},ticks:{color:'#3dd68c',font:{family:'IBM Plex Mono',size:9}},display:datasets.some(ds=>SERIES_CFG[Object.keys(SERIES_CFG).find(k=>SERIES_CFG[k].label===ds.label)]?.yAxis==='count')},
+        pct:{type:'linear',position:'right',grid:{display:false},ticks:{color:'#9b8ff5',font:{family:'IBM Plex Mono',size:9},callback:v=>v+'%'},min:0,max:100,display:datasets.some(ds=>SERIES_CFG[Object.keys(SERIES_CFG).find(k=>SERIES_CFG[k].label===ds.label)]?.yAxis==='pct')},
+        rank:{type:'linear',position:'right',grid:{display:false},reverse:true,ticks:{color:'#6eb5f5',font:{family:'IBM Plex Mono',size:9},stepSize:1},display:datasets.some(ds=>SERIES_CFG[Object.keys(SERIES_CFG).find(k=>SERIES_CFG[k].label===ds.label)]?.yAxis==='rank')},
+      }
+    }
+  });
+}
+
+function toggleSeries(btn,key){
+  btn.classList.toggle('on');
+  if(activeSeries.has(key))activeSeries.delete(key);
+  else activeSeries.add(key);
+  buildAndRenderChart();
+}
+
+function setRange(btn,days){
+  document.querySelectorAll('.cr-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  currentRange=days;
+  const lbl=document.getElementById('chart-range-lbl');
+  if(lbl)lbl.textContent='LAST '+days+' DAYS';
+  buildAndRenderChart();
+}
+
 </script>
 </body>
 </html>
