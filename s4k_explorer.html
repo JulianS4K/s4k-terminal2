@@ -1010,7 +1010,15 @@ function buildChartData(d,n){
   const sc=d.sg?extendSeries(d.spark2.map(v=>Math.round(v*d.sg.ct/d.tevo.ct)),n):null;
   const kalshiArr=new Array(n).fill(d.team&&TEAMS[d.team]?TEAMS[d.team].kalshiPct:0);
   const espnArr=d.team&&TEAMS[d.team]?new Array(n).fill(TEAMS[d.team].rank):null;
-  return{labels,tf,ta,tm_,sf,sa,sc,tc,kalshiArr,espnArr};
+  var injScatter=[];
+  if(d.team&&TEAMS[d.team]){
+    var roster=TEAMS[d.team].roster||[];
+    var floorNow=tf[tf.length-1]||d.tevo.floor;
+    roster.filter(function(p){return p.inj&&p.inj!=='';}).forEach(function(p,i){
+      injScatter.push({x:n-1,y:Math.round(floorNow*(1+i*0.07)),name:p.name,status:p.inj,pos:p.pos});
+    });
+  }
+  return{labels,tf,ta,tm_,sf,sa,sc,tc,kalshiArr,espnArr,injScatter};
 }
 
 const SERIES_CFG={
@@ -1046,9 +1054,11 @@ function buildAndRenderChart(){
     const isCount=cfg.yAxis==='count';
     const isPct=cfg.yAxis==='pct';
     const isRank=cfg.yAxis==='rank';
+    var xyData=data.map(function(v,i){return{x:i,y:v};});
     datasets.push({
+      type:'line',
       label:cfg.label,
-      data,
+      data:xyData,
       borderColor:cfg.color,
       backgroundColor:cfg.color+'18',
       borderWidth:1.5,
@@ -1059,9 +1069,28 @@ function buildAndRenderChart(){
       yAxisID:cfg.yAxis,
     });
   });
+  if(cd.injScatter&&cd.injScatter.length){
+    cd.injScatter.forEach(function(pt){
+      var isOut=pt.status==='OUT';
+      datasets.push({
+        type:'scatter',
+        label:'INJ:'+pt.name,
+        data:[{x:pt.x,y:pt.y}],
+        backgroundColor:isOut?'rgba(224,82,82,0.9)':'rgba(245,166,35,0.9)',
+        borderColor:isOut?'#e05252':'#f5a623',
+        borderWidth:2,
+        pointRadius:7,
+        pointStyle:'triangle',
+        pointHoverRadius:9,
+        yAxisID:'price',
+        order:0,
+        _inj:{name:pt.name,status:pt.status,pos:pt.pos},
+      });
+    });
+  }
   if(patternChart)patternChart.destroy();
   patternChart=new Chart(canvas,{
-    type:'line',
+    type:'scatter',
     data:{labels:cd.labels,datasets},
     options:{
       responsive:true,
@@ -1079,10 +1108,25 @@ function buildAndRenderChart(){
           titleFont:{family:'IBM Plex Mono',size:9},
           bodyFont:{family:'IBM Plex Mono',size:10},
           padding:8,
+          callbacks:{
+            title:function(items){
+              if(!items.length)return '';
+              var xi=Math.round(items[0].parsed.x);
+              return cd.labels[xi]||'';
+            },
+            label:function(item){
+              var ds=item.dataset;
+              if(ds._inj) return (ds._inj.status==='OUT'?'🔴 OUT':'🟡 '+ds._inj.status)+' — '+ds._inj.name+' ('+ds._inj.pos+')';
+              var v=item.parsed.y;
+              if(v==null)return null;
+              var fmt2=ds.yAxisID==='price'?'$'+Math.round(v).toLocaleString():ds.yAxisID==='pct'?v.toFixed(1)+'%':Math.round(v);
+              return ds.label+': '+fmt2;
+            }
+          }
         }
       },
       scales:{
-        x:{grid:{color:'#222626',lineWidth:.5},ticks:{color:'#596060',font:{family:'IBM Plex Mono',size:9},maxTicksLimit:7}},
+        x:{type:'linear',min:0,grid:{color:'#222626',lineWidth:.5},ticks:{color:'#596060',font:{family:'IBM Plex Mono',size:9},maxTicksLimit:7,callback:function(v){return cd.labels[Math.round(v)]||'';}}},
         price:{type:'linear',position:'left',grid:{color:'#222626',lineWidth:.5},ticks:{color:'#f5a623',font:{family:'IBM Plex Mono',size:9},callback:v=>'$'+v.toLocaleString()},title:{display:false},display:datasets.some(ds=>SERIES_CFG[Object.keys(SERIES_CFG).find(k=>SERIES_CFG[k].label===ds.label)]?.yAxis==='price')},
         count:{type:'linear',position:'right',grid:{display:false},ticks:{color:'#3dd68c',font:{family:'IBM Plex Mono',size:9}},display:datasets.some(ds=>SERIES_CFG[Object.keys(SERIES_CFG).find(k=>SERIES_CFG[k].label===ds.label)]?.yAxis==='count')},
         pct:{type:'linear',position:'right',grid:{display:false},ticks:{color:'#9b8ff5',font:{family:'IBM Plex Mono',size:9},callback:v=>v+'%'},min:0,max:100,display:datasets.some(ds=>SERIES_CFG[Object.keys(SERIES_CFG).find(k=>SERIES_CFG[k].label===ds.label)]?.yAxis==='pct')},
