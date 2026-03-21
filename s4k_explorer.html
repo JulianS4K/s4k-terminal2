@@ -1092,7 +1092,9 @@ function tick(){const n=new Date();$('clk').textContent=n.toLocaleDateString('en
 tick();setInterval(tick,1000);
 
 // ── INIT ────────────────────────────────────────────────
-window.addEventListener('load',()=>renderEvent('wsh-nyk'));
+window.addEventListener('load', function(){
+  loadTrackedEvents();
+});
 
 // Live price tick sim
 setInterval(()=>{
@@ -2109,6 +2111,159 @@ function setStatus(cls, msg){
     if(saved && saved.startsWith('https://')) GAS_URL = saved;
   }catch(e){}
 })();
+
+
+// ── LOAD TRACKED EVENTS FROM GAS ────────────────────────
+var liveEvents = {};
+
+function loadTrackedEvents() {
+  var root = document.getElementById('sidebar-events-root');
+  if(!root){ renderEvent('wsh-nyk'); return; }
+  root.innerHTML = '<div style="padding:16px 10px;text-align:center;font-size:10px;color:var(--text2)">Loading…</div>';
+
+  jsonp(GAS_URL + '?action=get_tracked_events')
+    .then(function(data){
+      if(!data.ok || !data.events || !data.events.length){
+        root.innerHTML = '<div style="padding:14px 10px;font-size:10px;color:var(--text2)">No tracked events yet.<br><br>Search above to add events.</div>';
+        return;
+      }
+      buildSidebar(data.events);
+    })
+    .catch(function(err){
+      root.innerHTML = '<div style="padding:14px 10px;font-size:10px;color:var(--text3)">Could not load from GAS.<br>' + err.message + '</div>';
+      renderEvent('wsh-nyk');
+    });
+}
+
+function buildSidebar(events) {
+  var root = document.getElementById('sidebar-events-root');
+  var now  = new Date();
+  var byPerf = {}, venMap = {};
+
+  events.forEach(function(ev) {
+    var key  = ev.event_id;
+    var evDate = ev.occurs_at_local || ev.event_date || '';
+    var days = evDate ? Math.round((new Date(evDate) - now) / 86400000) : null;
+
+    // Register in EV map for renderEvent()
+    EV[key] = {
+      title:   ev.event_name || ('Event ' + key),
+      date:    evDate ? evDate.substring(0,10) : '—',
+      venue:   (ev.venue||'') + (ev.venue_city ? ', '+ev.venue_city : ''),
+      pill:    days!==null ? days+'D OUT' : '—',
+      pillCls: days===null?'far':days<=3?'soon':days<=14?'near':'far',
+      days:    days,
+      floor:   ev.tevo_floor||0, avg:0, median:0, max:0,
+      count:   ev.tevo_count||0,
+      tevo:    {floor:ev.tevo_floor||0,avg:0,median:0,max:0,ct:ev.tevo_count||0},
+      sg:      ev.sg_floor?{floor:ev.sg_floor,avg:0,median:0,max:0,ct:0}:null,
+      gt:null, spark1:[0,0,0,0,0,0,0], spark2:[0,0,0,0,0,0,0], team:null
+    };
+    EV_MAPS[key] = EV_MAPS[key] || {tevo:key, sg:'', gt:''};
+    trackedIds.add(key);
+    liveEvents[key] = ev;
+
+    // Group by performer
+    var pk = ev.performer_id || ev.performer || 'unknown';
+    if(!byPerf[pk]) byPerf[pk] = {name:ev.performer||'Unknown', cat:ev.category||'', events:[]};
+    byPerf[pk].events.push({ev,key,days});
+
+    // Group by venue
+    var vk = ev.venue_id || ev.venue || 'unknown';
+    if(!venMap[vk]) venMap[vk] = {name:ev.venue||'Unknown', city:ev.venue_city||'', events:[]};
+    venMap[vk].events.push({ev,key,days});
+  });
+
+  var html = '';
+
+  // Events by performer group
+  Object.keys(byPerf).sort(function(a,b){
+    return byPerf[a].name.localeCompare(byPerf[b].name);
+  }).forEach(function(pk) {
+    var grp = byPerf[pk];
+    var cat = grp.cat ? grp.cat.toUpperCase().replace('PRO ','').trim() : '';
+    html += '<div class="sec-div">'+(cat?cat+' · ':'')+grp.name.toUpperCase()
+      +' <span class="sec-type type-event">'+grp.events.length+(grp.events.length>1?' EVENTS':' EVENT')+'</span></div>';
+
+    grp.events.sort(function(a,b){return (a.days===null?9999:a.days)-(b.days===null?9999:b.days);})
+    .forEach(function(item){
+      var ev=item.ev, key=item.key, days=item.days;
+      var tagCls = days===null?'tag-far':days<=3?'tag-soon':days<=14?'tag-near':'tag-far';
+      html += '<div class="li" data-evkey="'+key+'" data-type="ev" onclick="selLiveEl(this)">'
+        +'<div class="li-name">'+(ev.event_name||'').substring(0,36)+'</div>'
+        +'<div class="li-meta"><span>'+(evDate=ev.occurs_at_local||'').substring(0,10)+' · '+(ev.venue||'').substring(0,14)+'</span>'
+        +'<span class="li-floor fl-amber">'+(ev.tevo_floor?'$'+ev.tevo_floor:'—')+'</span></div>'
+        +'<div class="li-meta" style="margin-top:3px"><span><span class="mapped-badge mb-tevo">TE</span>'
+        +(ev.sg_floor?'<span class="mapped-badge mb-sg">SG</span>':'')
+        +'</span><span class="li-tag '+tagCls+'">'+(days!==null?days+'D':'—')+'</span></div>'
+        +'</div>';
+    });
+  });
+
+  // Performer aggregates
+  if(Object.keys(byPerf).length){
+    html += '<div class="sec-div" style="margin-top:8px">PERFORMERS <span class="sec-type type-team">AGGREGATE</span></div>';
+    Object.keys(byPerf).sort(function(a,b){return byPerf[a].name.localeCompare(byPerf[b].name);})
+    .forEach(function(pk){
+      var grp=byPerf[pk];
+      var floors=grp.events.map(function(i){return i.ev.tevo_floor||0;}).filter(Boolean);
+      var minF=floors.length?Math.min.apply(null,floors):0;
+      html += '<div class="li" data-evkey="'+pk+'" data-type="team" onclick="selLiveEl(this)">'
+        +'<div class="li-name">'+grp.name+'</div>'
+        +'<div class="li-meta"><span>'+grp.cat+'</span><span class="li-floor fl-purple">'+(minF?'$'+minF:'—')+'</span></div>'
+        +'<div class="li-meta" style="margin-top:3px"><span style="color:var(--text2)">'+grp.events.length+' events</span></div>'
+        +'</div>';
+    });
+  }
+
+  // Venue aggregates
+  if(Object.keys(venMap).length){
+    html += '<div class="sec-div" style="margin-top:8px">VENUES <span class="sec-type type-venue">AGGREGATE</span></div>';
+    Object.keys(venMap).sort(function(a,b){return venMap[a].name.localeCompare(venMap[b].name);})
+    .forEach(function(vk){
+      var vn=venMap[vk];
+      var floors=vn.events.map(function(i){return i.ev.tevo_floor||0;}).filter(Boolean);
+      var minF=floors.length?Math.min.apply(null,floors):0;
+      html += '<div class="li" data-evkey="'+vk+'" data-type="venue" onclick="selLiveEl(this)">'
+        +'<div class="li-name">'+vn.name+'</div>'
+        +'<div class="li-meta"><span>'+vn.city+'</span><span class="li-floor fl-teal">'+(minF?'$'+minF:'—')+'</span></div>'
+        +'<div class="li-meta" style="margin-top:3px"><span style="color:var(--text2)">'+vn.events.length+' events</span></div>'
+        +'</div>';
+    });
+  }
+
+  root.innerHTML = html;
+
+  // Auto-select first event
+  var first = root.querySelector('.li[data-evkey]');
+  if(first){ selLive(first, 'ev', first.getAttribute('data-evkey')); }
+}
+
+function selLiveEl(el) {
+  selLive(el, el.getAttribute('data-type')||'ev', el.getAttribute('data-evkey'));
+}
+function selLive(el, type, key) {
+  document.querySelectorAll('.li').forEach(function(e){e.classList.remove('active','active-team','active-venue');});
+  el.classList.add(type==='ev'?'active':type==='team'?'active-team':'active-venue');
+  lastViewType=type;
+  if(type==='ev')    lastEventKey=key;
+  if(type==='team')  lastTeamKey=key;
+  if(type==='venue') lastVenueKey=key;
+  var showSrc=(type!=='venue');
+  document.getElementById('tab-tevo').style.display=showSrc?'flex':'none';
+  document.getElementById('tab-kalshi').style.display=showSrc?'flex':'none';
+  document.querySelectorAll('#tabs .tab').forEach(function(t){t.classList.remove('active');});
+  document.querySelector('#tabs .tab').classList.add('active');
+  activeTab='pricing';
+  if(type==='ev') renderEvent(key);
+  else {
+    $('ev-title').textContent = key;
+    $('ev-pill').textContent  = type==='team'?'PERFORMER':'VENUE';
+    $('ev-pill').className    = 'dpill '+(type==='team'?'team':'venue');
+    $('ev-counts').textContent='';
+    $('content').innerHTML    = '<div style="padding:20px;color:var(--text2);font-size:10px">Select an event from this '+(type==='team'?'performer':'venue')+' above to view pricing.</div>';
+  }
+}
 
 </script>
 </body>
