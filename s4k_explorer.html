@@ -1802,47 +1802,53 @@ function trackEvent(btn, tevoId, ev){
   btn.textContent = 'Saving…';
   btn.disabled = true;
 
-  var payload = {
-    event_id:     String(ev.id),
-    name:         ev.name || '',
-    src:          'TE',
-    date:         ev.occurs_at_local || ev.occurs_at || '',
-    occurs_at_local: ev.occurs_at_local || '',
-    state:        ev.state || 'shown',
-    popularity_score:        ev.popularity_score || 0,
-    long_term_popularity_score: ev.long_term_popularity_score || 0,
-    available_count:   ev.available_count || 0,
-    products_count:    ev.products_count || 0,
-    products_eticket_count: ev.products_eticket_count || 0,
-    tbd:           ev.tbd || false,
-    owned_by_office: ev.owned_by_office || false,
-    venue_id:      ev.venue ? String(ev.venue.id) : '',
-    venue:         ev.venue ? ev.venue.name : '',
-    venue_city:    ev.venue ? ev.venue.location : '',
-    performances:  ev.performances || [],
-    category:      ev.category ? ev.category.name : '',
-    category_parent: ev.category && ev.category.parent ? ev.category.parent : ''
-  };
+  // Build URL params — GET-safe, no base64
+  var venue = ev.venue || {};
+  var cat   = ev.category || {};
+  var perfs = ev.performances || [];
+  var params = [
+    'action=track_event',
+    'event_id='   + encodeURIComponent(String(ev.id)),
+    'name='       + encodeURIComponent(ev.name || ''),
+    'date='       + encodeURIComponent(ev.occurs_at_local || ev.occurs_at || ''),
+    'occurs_at_local=' + encodeURIComponent(ev.occurs_at_local || ''),
+    'state='      + encodeURIComponent(ev.state || 'shown'),
+    'popularity_score=' + (ev.popularity_score || 0),
+    'long_term_popularity_score=' + (ev.long_term_popularity_score || 0),
+    'available_count=' + (ev.available_count || 0),
+    'products_count='  + (ev.products_count || 0),
+    'eticket_count='   + (ev.products_eticket_count || 0),
+    'tbd='         + (ev.tbd ? 'true' : 'false'),
+    'owned_by_office=' + (ev.owned_by_office ? 'true' : 'false'),
+    'venue_id='    + encodeURIComponent(venue.id ? String(venue.id) : ''),
+    'venue_name='  + encodeURIComponent(venue.name || ''),
+    'venue_city='  + encodeURIComponent(venue.location || ''),
+    'category='    + encodeURIComponent(cat.name || ''),
+    'category_parent=' + encodeURIComponent(cat.parent || ''),
+    'performances=' + encodeURIComponent(JSON.stringify(perfs))
+  ].join('&');
 
-  gasPost({action:'track', event: payload})
+  jsonp(GAS_URL + '?' + params)
   .then(function(data){
-    if(data.ok !== false){
-      btn.textContent = '✓ TRACKED';
+    if(data && data.ok !== false){
+      btn.textContent = '✓';
       btn.classList.add('tracked');
       btn.disabled = false;
       trackedIds.add(String(tevoId));
-      // Add to left panel
       addTrackedEventToPanel(ev);
-      // Map TEvo ID immediately
       EV_MAPS[String(tevoId)] = {tevo: String(tevoId), sg:'', gt:''};
     } else {
-      btn.textContent = 'Error';
+      btn.textContent = 'Err';
+      btn.title = data && data.error ? data.error : 'Save failed';
       btn.disabled = false;
+      console.error('track_event error:', data);
     }
   })
-  .catch(function(){
-    btn.textContent = 'Error';
+  .catch(function(err){
+    btn.textContent = 'Err';
+    btn.title = err.message;
     btn.disabled = false;
+    console.error('track_event catch:', err);
   });
 }
 
