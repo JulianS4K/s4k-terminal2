@@ -1642,6 +1642,39 @@ function renderPlaceholderTab(title,msg){
 // ── CONFIG ───────────────────────────────────────────────
 var GAS_URL = 'https://script.google.com/macros/s/AKfycbxxem8JuAgvHluBkvi9892d_9UzyT-Px6DxsYYdQgD1jyMZvliT_K3bxn4aEXzgsqvm/exec';
 
+// ── JSONP helper (bypasses CORS for file:// and GAS) ─────
+var _jsonpCbCount = 0;
+function jsonp(url) {
+  return new Promise(function(resolve, reject) {
+    var cbName = '_gasJsonp' + (++_jsonpCbCount);
+    var script = document.createElement('script');
+    var timer = setTimeout(function(){
+      cleanup(); reject(new Error('Timeout'));
+    }, 12000);
+    function cleanup(){ delete window[cbName]; if(script.parentNode) script.parentNode.removeChild(script); clearTimeout(timer); }
+    window[cbName] = function(data){ cleanup(); resolve(data); };
+    script.onerror = function(){ cleanup(); reject(new Error('Script load failed')); };
+    script.src = url + (url.includes('?')?'&':'?') + 'callback=' + cbName;
+    document.head.appendChild(script);
+  });
+}
+
+// ── POST via hidden form trick for track/save actions ────
+function gasPost(payload) {
+  return new Promise(function(resolve, reject){
+    var cbName = '_gasPost' + (++_jsonpCbCount);
+    var script = document.createElement('script');
+    var timer = setTimeout(function(){ cleanup(); reject(new Error('Timeout')); }, 12000);
+    function cleanup(){ delete window[cbName]; if(script.parentNode) script.parentNode.removeChild(script); clearTimeout(timer); }
+    window[cbName] = function(data){ cleanup(); resolve(data); };
+    script.onerror = function(){ cleanup(); reject(new Error('Post failed')); };
+    // Encode payload as base64 in URL param — GAS doGet reads it
+    var encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+    script.src = GAS_URL + '?_post=1&_data=' + encodeURIComponent(encoded) + '&callback=' + cbName;
+    document.head.appendChild(script);
+  });
+}
+
 // ── TEVO SEARCH ──────────────────────────────────────────
 var searchTimer = null;
 var trackedIds  = new Set(Object.keys(EV).map(k => EV[k].tevoId).filter(Boolean));
@@ -1669,8 +1702,7 @@ function doSearch(q){
   el.classList.add('open');
 
   var url = GAS_URL + '?action=search_te&q=' + encodeURIComponent(q) + '&only_with_available_tickets=true&per_page=20';
-  fetch(url)
-    .then(function(r){ return r.json(); })
+  jsonp(url)
     .then(function(data){
       if(!data.ok || !data.events || !data.events.length){
         el.innerHTML = '<div class="sr-loading" style="color:var(--text2)">No events found for "' + q + '"</div>';
@@ -1686,17 +1718,22 @@ function doSearch(q){
         searchResultCache[String(tevoId)] = ev;
         return '<div class="sr-item">'
           + '<div style="display:flex;align-items:flex-start;gap:6px">'
-          + '<div style="flex:1"><div class="sr-name">' + (ev.name||'').substring(0,52) + '</div>'
-          + '<div class="sr-meta"><span>' + date + ' · ' + venue.substring(0,30) + '</span>'
-          + (pop ? '<span class="sr-pop">↑'+pop+'</span>' : '') + '</div>'
-          + '<div class="sr-meta" style="margin-top:2px"><span style="color:var(--text3)">' + ct + ' listings</span></div></div>'
+          + '<div style="flex:1">'
+          + '<div class="sr-name">' + (ev.name||'').substring(0,46) + '</div>'
+          + '<div class="sr-meta" style="margin-top:2px">'
+          + '<span style="color:var(--amber);font-weight:500;letter-spacing:.04em">TE#' + tevoId + '</span>'
+          + (pop ? '<span class="sr-pop" style="margin-left:4px">↑'+pop+'</span>' : '')
+          + '</div>'
+          + '<div class="sr-meta"><span>' + date + ' · ' + venue.substring(0,28) + '</span></div>'
+          + '<div class="sr-meta"><span style="color:var(--text3)">' + ct + ' listings</span></div>'
+          + '</div>'
           + '<button class="sr-track-btn'+(isTracked?' tracked':'')+'" data-tevo-id="'+tevoId+'" onclick="event.stopPropagation();trackEventById(this)">'
-          + (isTracked ? '✓ TRACKED' : '+ TRACK') + '</button>'
+          + (isTracked ? '✓' : '+') + '</button>'
           + '</div></div>';
       }).join('');
     })
     .catch(function(err){
-      el.innerHTML = '<div class="sr-error">Search error: ' + err.message + '</div>';
+      el.innerHTML = '<div class="sr-error">Search error: ' + err.message + '<br><span style="color:var(--text3);font-size:9px">Check GAS deployment allows anonymous access</span></div>';
     });
 }
 
@@ -1735,12 +1772,7 @@ function trackEvent(btn, tevoId, ev){
     category_parent: ev.category && ev.category.parent ? ev.category.parent : ''
   };
 
-  fetch(GAS_URL, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({action:'track', event: payload})
-  })
-  .then(function(r){ return r.json(); })
+  gasPost({action:'track', event: payload})
   .then(function(data){
     if(data.ok !== false){
       btn.textContent = '✓ TRACKED';
@@ -1829,8 +1861,7 @@ function onPerfSearchInput(val){
 function doPerfSearch(q){
   var el = document.getElementById('psearch-results');
   el.innerHTML = '<div class="pr-placeholder">Searching…</div>';
-  fetch(GAS_URL + '?action=performerSearch&q=' + encodeURIComponent(q) + '&fuzzy=true')
-    .then(function(r){ return r.json(); })
+  jsonp(GAS_URL + '?action=performerSearch&q=' + encodeURIComponent(q) + '&fuzzy=true')
     .then(function(data){
       if(!data.ok || !data.performers || !data.performers.length){
         el.innerHTML = '<div class="pr-placeholder">No performers found for "'+q+'"</div>';
@@ -1882,8 +1913,7 @@ function loadPerfEvents(btn){
     + '&only_with_available_tickets=true&per_page=10'
     + '&occurs_at.gte=' + new Date().toISOString().substring(0,10);
 
-  fetch(url)
-    .then(function(r){ return r.json(); })
+  jsonp(url)
     .then(function(data){
       btn.textContent = '▾ Hide events';
       btn.disabled = false;
