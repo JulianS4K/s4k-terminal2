@@ -1,0 +1,65 @@
+# Push the Gmail order-lifecycle Apps Script to its Google Apps Script project whenever
+# apps_script/ changes on main (or on demand). Uses clasp.
+#
+# The deploy REPLACES every file in the Apps Script project with:
+#   apps_script/*  (S4K_OrderLifecycleV3.gs + appsscript.json manifest)
+#   n2b_sync.gs    fetched from JulianS4K/Terminal-2 main (that repo owns it)
+# Any other file in the project is removed, so keep everything the project needs here.
+#
+# Repository secrets (Settings -> Secrets and variables -> Actions):
+#   APPS_SCRIPT_ID   Apps Script editor -> Project Settings -> Script ID
+#   CLASPRC_JSON     contents of ~/.clasprc.json after `npx @google/clasp login`
+# The Apps Script API must be on for that Google account: https://script.google.com/home/usersettings
+# Script Properties (API keys, secrets) are NOT touched by a push.
+name: deploy-apps-script
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps_script/**', '.github/workflows/deploy-apps-script.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-apps-script
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check secrets
+        env:
+          APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          if [ -z "$APPS_SCRIPT_ID" ] || [ -z "$CLASPRC_JSON" ]; then
+            echo "::error::Set the APPS_SCRIPT_ID and CLASPRC_JSON repository secrets (see this workflow's header)."
+            exit 1
+          fi
+
+      - name: Assemble the project
+        run: |
+          mkdir -p build
+          cp apps_script/*.gs apps_script/appsscript.json build/
+          curl -fsSL https://raw.githubusercontent.com/JulianS4K/Terminal-2/main/scripts/apps_script/n2b_sync.gs -o build/n2b_sync.gs
+          cat build/*.gs > "$RUNNER_TEMP/all.js" && node --check "$RUNNER_TEMP/all.js"
+          ls -la build
+
+      - name: Push with clasp
+        env:
+          APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          printf '{"scriptId":"%s","rootDir":"build"}' "$APPS_SCRIPT_ID" > .clasp.json
+          npx --yes @google/clasp@2.4.2 push --force
+          rm -f "$HOME/.clasprc.json"
