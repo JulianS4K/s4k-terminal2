@@ -496,8 +496,7 @@ function escapeRegexV3_(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\
  *  Nothing else on the thread changes (not marked read, not archived). */
 function _clearPassedNeed2BuyV3() {
   const cutoffMs = Date.now() - N2B_PASSED_HOURSV3 * 3600000;
-  // Gmail search spells a nested label with '-' (as n2b_sync.gs does): Need2Buy/WaitToBuy -> need2buy-waittobuy
-  const q = '(' + N2B_LABELSV3.map(function (l) { return 'label:' + l.toLowerCase().replace(/[\/ ]/g, '-'); }).join(' OR ') + ')' +
+  const q = need2BuySearchV3_() +
             ' subject:"PEDDLING SALE RECEIVED" before:' + Math.floor(cutoffMs / 1000);
   const stats = { scanned: 0, cleared: 0, upcoming: 0, noDate: 0 };
   let start = 0, batch;
@@ -510,7 +509,7 @@ function _clearPassedNeed2BuyV3() {
       if (evMs >= cutoffMs) { stats.upcoming++; return; }
       const when = Utilities.formatDate(new Date(evMs), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
       if (TEST_MODEV3) { console.log('🧪 need2Buy passed: would drop labels on "' + thread_subjectV3_(thread) + '" (event ' + when + ')'); return; }
-      const removed = removeLabelsCIV3_(thread, N2B_LABELSV3);
+      const removed = dropNeed2BuyV3_(thread);
       removeTriageLabelsV3_(thread);
       if (removed.length) { stats.cleared++; console.log('🧹 event ' + when + ' passed: removed ' + removed.join(', ') + ' from "' + thread_subjectV3_(thread) + '"'); }
     });
@@ -540,6 +539,17 @@ function eventStartMsForThreadV3_(thread) {
   return ms;
 }
 
+/** Drop every need2Buy label (need2Buy and Need2Buy/WaitToBuy). Removing WaitToBuy is what
+ *  closes a PED order in Supabase (n2b_sync stops sending it), so bought / filled /
+ *  cancelled / event-passed all go through here. */
+function dropNeed2BuyV3_(thread) { return removeLabelsCIV3_(thread, N2B_LABELSV3); }
+
+/** Gmail search clause matching any need2Buy label. Gmail spells a nested label with '-':
+ *  Need2Buy/WaitToBuy -> need2buy-waittobuy (as n2b_sync.gs does). */
+function need2BuySearchV3_() {
+  return '(' + N2B_LABELSV3.map(function (l) { return 'label:' + l.toLowerCase().replace(/[\/ ]/g, '-'); }).join(' OR ') + ')';
+}
+
 /** Remove labels by name, case-insensitively, straight off the thread's own labels. */
 function removeLabelsCIV3_(thread, names) {
   const want = names.map(function (n) { return n.toLowerCase(); });
@@ -557,7 +567,7 @@ function removeLabelsCIV3_(thread, names) {
 /** bought: add `bought`, drop `need2Buy`, strip triage, mark read. Stays in inbox. */
 function markBoughtV3_(thread) {
   if (!applyLabelV3_(thread, LABELSV3.bought)) return false;
-  removeLabelV3_(thread, LABELSV3.need2buy);
+  dropNeed2BuyV3_(thread);
   removeTriageLabelsV3_(thread);
   thread.markRead();
   return true;
@@ -566,7 +576,7 @@ function markBoughtV3_(thread) {
 /** filled: add site filled label; only if verified, drop need2Buy + triage, mark read, archive. `bought` untouched. */
 function markFilledV3_(thread, filledLabel) {
   if (!applyLabelV3_(thread, filledLabel)) return false;
-  removeLabelV3_(thread, LABELSV3.need2buy);
+  dropNeed2BuyV3_(thread);
   removeTriageLabelsV3_(thread);
   thread.markRead();
   thread.moveToArchive();
@@ -664,7 +674,7 @@ function applyCrmVerdictV3_(it, r, stats) {
       const lbl = cancelLabelForV3_(cfg);
       if (TEST_MODEV3) { console.log('🧪 ' + tag + ': would CANCEL -> ' + lbl + detail); return; }
       if (applyLabelV3_(thread, lbl)) {
-        removeLabelV3_(thread, LABELSV3.need2buy);   // nothing left to buy
+        dropNeed2BuyV3_(thread);   // nothing left to buy
         removeTriageLabelsV3_(thread);
         thread.markRead(); stats.cancelled++;
         console.log('🚨 ' + tag + ' cancelled (' + (r.market_status || r.crm_status) + ')' + detail);
@@ -1051,13 +1061,13 @@ function _sweepFilledThreadsV3() {
 /** Any thread carrying BOTH bought and need2Buy (e.g. a "Re:" reply that landed
  *  as its own thread, or a manual label) loses need2Buy + triage. bought stays. */
 function _sweepBoughtThreadsV3() {
-  const q = 'label:"' + LABELSV3.bought + '" label:"' + LABELSV3.need2buy + '"';
+  const q = 'label:"' + LABELSV3.bought + '" ' + need2BuySearchV3_();
   const threads = GmailApp.search(q, 0, 100);
   if (!threads.length) { console.log('Bought sweep: nothing to clean.'); return; }
   console.log('Bought sweep: ' + threads.length + ' thread(s) still need2Buy.');
   threads.forEach(function (thread) {
     if (TEST_MODEV3) { console.log('🧪 Bought sweep: would clean "' + thread_subjectV3_(thread) + '"'); return; }
-    removeLabelV3_(thread, LABELSV3.need2buy);
+    dropNeed2BuyV3_(thread);
     removeTriageLabelsV3_(thread);
   });
 }
@@ -1069,14 +1079,14 @@ function _sweepFilledOnlyV3() {
   const filled = [LABELSV3.filledParent];
   Object.keys(SITESV3).forEach(function (k) { if (filled.indexOf(SITESV3[k].filled) === -1) filled.push(SITESV3[k].filled); });
   const filledClause = filled.map(function (l) { return 'label:"' + l + '"'; }).join(' OR ');
-  const needsClause  = 'is:unread OR label:"' + LABELSV3.need2buy + '" OR ' +
+  const needsClause  = 'is:unread OR ' + need2BuySearchV3_() + ' OR ' +
     LABELSV3.triage.map(function (l) { return 'label:"' + l + '"'; }).join(' OR ');
   const threads = GmailApp.search('(' + filledClause + ') (' + needsClause + ')', 0, SWEEP_MAX_PER_RUNV3);
   if (!threads.length) { console.log('Sweep: nothing to clean.'); return; }
   console.log('Sweep: ' + threads.length + ' thread(s).');
   threads.forEach(function (thread) {
     if (TEST_MODEV3) { console.log('🧪 Sweep: would clean "' + thread_subjectV3_(thread) + '"'); return; }
-    removeLabelV3_(thread, LABELSV3.need2buy);
+    dropNeed2BuyV3_(thread);
     removeTriageLabelsV3_(thread);
     thread.markRead();
     if (SWEEP_ARCHIVEV3) thread.moveToArchive();
