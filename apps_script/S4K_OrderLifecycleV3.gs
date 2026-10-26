@@ -662,16 +662,36 @@ function sbRpcV3_(sbUrl, sbAnon, fn, payload) {
   return JSON.parse(resp.getContentText());
 }
 
-/** Manual check of one order, e.g. testCrmLookupV3('vivid', '80937492'). */
+/** Read-only CRM check; changes no labels.
+ *  From the editor's Run button (no arguments): looks up the newest 3 open sale threads
+ *  per site and prints each verdict. From code: testCrmLookupV3('vivid', '80937492'). */
 function testCrmLookupV3(site, id) {
   const props = PropertiesService.getScriptProperties();
+  let orders;
+  if (site && id) {
+    orders = [{ site: site, id: String(id) }];
+  } else {
+    orders = [];
+    CRM_SITESV3.forEach(function (k) {
+      GmailApp.search(pollerQueryV3_(SITESV3[k]), 0, 3).forEach(function (t) {
+        const so = siteOrderForThreadV3_(t, k);
+        if (so) orders.push({ site: k, id: so.id, subject: thread_subjectV3_(t) });
+      });
+    });
+    if (!orders.length) { console.log('No open sale threads found.'); return; }
+  }
   const r = sbRpcV3_(
     (props.getProperty('SUPABASE_PROJECT_URL') || '').trim(),
     (props.getProperty('SUPABASE_ANON_KEY') || '').trim(),
     'crm_order_status_lookup',
-    { p_orders: [{ site: site || 'vivid', id: String(id || '') }],
+    { p_orders: orders.map(function (o) { return { site: o.site, id: o.id }; }),
       p_shared_secret: (props.getProperty('APPSCRIPT_INGEST_SECRET') || '').trim() });
-  console.log(JSON.stringify(r, null, 2));
+  if (orders.length === 1) { console.log(JSON.stringify(r, null, 2)); return; }
+  r.forEach(function (x, i) {
+    console.log(x.site + ' ' + x.id + ' -> ' + x.verdict +
+      (x.crm_status ? ' (' + x.crm_status + ')' : '') + crmDetailV3_(x) +
+      ' | ' + String(orders[i].subject).substring(0, 70));
+  });
 }
 
 /* ═════════════════════════ API POLLERS (manual entry points only) ═════════════════════════ */
