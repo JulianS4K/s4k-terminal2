@@ -371,6 +371,7 @@ canvas.sp{width:100%;height:44px;display:block;min-height:44px}
     <div class="tab" id="tab-kalshi" onclick="switchTab('kalshi',this)">KALSHI</div>
     <div class="tab" onclick="switchTab('history',this)">HISTORY</div>
     <div class="tab" onclick="switchTab('alerts',this)">ALERTS</div>
+    <div class="tab" id="tab-subs" onclick="switchTab('subs',this)">SUBS</div>
   </div>
   <div id="content"></div>
 </div>
@@ -471,6 +472,11 @@ canvas.sp{width:100%;height:44px;display:block;min-height:44px}
         Deploy → New Deployment → Web app<br>
         Execute as: <code>Me</code> &nbsp;|&nbsp; Who has access: <code>Anyone</code>
       </div>
+    </div>
+    <div class="cfg-row">
+      <div class="cfg-lbl">SUBS VIEW KEY</div>
+      <input class="cfg-input" id="cfg-subs-key" type="password" placeholder="s4kv_…" autocomplete="off">
+      <div class="cfg-note">Read-only key for the SUBS tab (need2Buy 12h+ orders and their subs, from Supabase). Stored in this browser only.</div>
     </div>
     <div class="cfg-status" id="cfg-status"></div>
     <div class="cfg-btns">
@@ -636,6 +642,7 @@ function fetchAndLoadSnapHistory(evKey, tevoId) {
   function renderOnce() {
     // Only render after both TEvo and SG have responded (or one failed)
     if(lastEventKey !== evKey) return;
+    if(activeTab !== 'pricing') return;   // a late response must not repaint over another tab
     if(!rendered){ rendered=true; renderEvent(evKey); }
   }
 
@@ -1349,6 +1356,7 @@ function switchTab(tab, btn){
   document.querySelectorAll('#tabs .tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');
   activeTab=tab;
+  if(tab!=='subs') stopSubsRefresh();
   if(tab==='pricing'){
     if(lastViewType==='ev')renderEvent(lastEventKey);
     else if(lastViewType==='team')renderTeam(lastTeamKey);
@@ -1362,6 +1370,8 @@ function switchTab(tab, btn){
     renderHistoryTab();
   } else if(tab==='alerts'){
     renderAlertsTab();
+  } else if(tab==='subs'){
+    renderSubsTab(false);
   }
 }
 
@@ -2085,9 +2095,111 @@ function loadPerfEvents(btn){
 }
 
 
+// ── SUBS TAB ─────────────────────────────────────────────
+// need2Buy 12h+ orders and their subs. The Gmail lifecycle Apps Script reports the order #s
+// from the sale emails to Supabase; Supabase maps them to events through the CRM, pulls
+// EVO / GoTickets / SeatGeek listings and applies the N2S cover gates. This tab only reads
+// the result (inbox_n2b_board_view), with the publishable key + a read-only view key.
+var SB_URL = 'https://hzrizjeaxlqcxfrtczpq.supabase.co';
+var SB_PUBLISHABLE_KEY = 'sb_publishable_lIuFt79XqZoGa70NWbg20Q_KBbRSDS8';
+var subsTimer = null, subsData = null, subsOnly = false, subsQuery = '';
+
+function subsViewKey(){ try{ return localStorage.getItem('s4k_subs_view_key') || ''; }catch(e){ return ''; } }
+function stopSubsRefresh(){ if(subsTimer){ clearInterval(subsTimer); subsTimer = null; } }
+function subsEsc(v){ return String(v==null?'':v).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+function subsMoney(n){ return n==null ? '–' : '$' + Number(n).toFixed(2); }
+function subsAgo(t){ if(!t) return null; var m = Math.round((Date.now() - new Date(t).getTime())/60000); return m < 60 ? m + 'm' : Math.round(m/60) + 'h'; }
+
+function renderSubsTab(pull){
+  stopSubsRefresh();
+  var key = subsViewKey();
+  if(!key){
+    $('content').innerHTML = '<div class="ccard" style="font-size:11px;color:var(--text2)">SUBS needs a view key. '
+      + 'Open <span class="amber" style="color:var(--amber);cursor:pointer" onclick="openCfg()">⚙ CONFIG</span> and paste it under SUBS VIEW KEY.</div>';
+    return;
+  }
+  if(!subsData) $('content').innerHTML = '<div class="slabel">SUBS — need2Buy 12h+</div><div class="ccard" style="color:var(--text2)">Loading…</div>';
+  fetch(SB_URL + '/rest/v1/rpc/inbox_n2b_board_view', {
+    method: 'POST',
+    headers: { 'apikey': SB_PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ p_view_key: key, p_pull: !!pull, p_per_order: 3 })
+  }).then(function(r){
+    return r.json().then(function(j){ if(!r.ok) throw new Error(j && (j.message || j.hint) || ('HTTP ' + r.status)); return j; });
+  }).then(function(d){
+    subsData = d;
+    if(activeTab === 'subs') drawSubs();
+  }).catch(function(e){
+    if(activeTab === 'subs') $('content').innerHTML = '<div class="slabel">SUBS — need2Buy 12h+</div><div class="ccard" style="color:var(--red)">'
+      + subsEsc(e.message) + (/view key/.test(e.message) ? ' — check ⚙ CONFIG → SUBS VIEW KEY.' : '') + '</div>';
+  });
+  subsTimer = setInterval(function(){ if(activeTab === 'subs') renderSubsTab(false); }, 60000);
+}
+
+function drawSubs(){
+  var d = subsData || {}, all = d.orders || [];
+  var withSubs = all.filter(function(o){ return o.covers && o.covers.length; }).length;
+  var unmapped = all.filter(function(o){ return !o.tevo_event_id; }).length;
+  var q = subsQuery.toLowerCase();
+  var shown = all.filter(function(o){
+    if(subsOnly && !(o.covers && o.covers.length)) return false;
+    return !q || [o.event_name, o.order_no, o.site, o.source, o.site_order_id, o.venue].join(' ').toLowerCase().indexOf(q) !== -1;
+  });
+  var btn = 'font-size:9px;font-weight:600;letter-spacing:.07em;padding:4px 10px;border-radius:2px;background:transparent;color:var(--text2);border:1px solid var(--border2);cursor:pointer;font-family:var(--mono)';
+  var head = '<div class="slabel" style="flex-wrap:wrap">SUBS — need2Buy 12h+'
+    + '<span style="color:var(--text)">' + all.length + '</span> orders · <span style="color:var(--green)">' + withSubs + '</span> with subs · '
+    + '<span style="color:var(--red)">' + unmapped + '</span> unmapped'
+    + '<label style="display:flex;gap:4px;align-items:center;margin-left:8px;cursor:pointer"><input type="checkbox" ' + (subsOnly?'checked':'') + ' onchange="subsOnly=this.checked;drawSubs()"> only with subs</label>'
+    + '<input value="' + subsEsc(subsQuery) + '" oninput="subsQuery=this.value;drawSubs()" placeholder="filter event / order # / site" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:10px;padding:3px 7px;border-radius:2px;outline:none;min-width:180px">'
+    + '<button style="' + btn + '" onclick="renderSubsTab(true)" title="Re-pull EVO / GoTickets / SeatGeek listings for these events now">↻ RE-PULL</button>'
+    + '<span style="margin-left:auto">' + (d.generated_at ? 'updated ' + new Date(d.generated_at).toLocaleTimeString() : '') + '</span></div>';
+  if(!shown.length){
+    $('content').innerHTML = head + '<div class="ccard" style="color:var(--text2)">' + (all.length ? 'Nothing matches the filter.' : 'No sale threads are need2Buy 12h+ right now.') + '</div>';
+    return;
+  }
+  $('content').innerHTML = head + shown.map(subsCard).join('');
+}
+
+function subsCard(o){
+  var site = o.site === 'auto' ? (o.source || '?') : o.site;
+  var L = o.listings || {};
+  var pills = ['evo','gotickets','seatgeek'].map(function(s){
+    var a = subsAgo(L[s]);
+    return '<span style="font-size:9px;padding:1px 5px;border-radius:2px;background:' + (a?'var(--green-dim)':'var(--bg3)') + ';color:' + (a?'var(--green)':'var(--text2)') + '">' + s.toUpperCase() + ' ' + (a||'–') + '</span>';
+  }).join(' ');
+  if(!o.tevo_event_id) pills = '<span style="font-size:9px;padding:1px 5px;border-radius:2px;background:var(--red-dim);color:var(--red)">NO EVENT MAPPING</span>';
+  var mail = o.thread_id ? '<a target="_blank" style="color:var(--blue)" href="https://mail.google.com/mail/u/0/#all/' + subsEsc(o.thread_id) + '">#' + subsEsc(o.order_no||'') + '</a>' : '#' + subsEsc(o.order_no||'');
+  var top = '<div style="display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;font-size:11px">'
+    + '<span style="font-weight:600;color:var(--text)">' + subsEsc(o.event_name || o.subject || '(unmapped)') + '</span>'
+    + '<span style="color:var(--text2)">' + subsEsc(o.event_date||'') + ' · ' + subsEsc(o.venue||'') + '</span></div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;font-size:10px;margin-top:3px">' + mail
+    + '<span>' + subsEsc(site) + ' ' + subsEsc(o.site_order_id) + '</span>'
+    + '<span>SEC <b>' + subsEsc(o.section||'?') + '</b> ROW <b>' + subsEsc(o.row||'?') + '</b> × ' + subsEsc(o.quantity||'?') + '</span>'
+    + '<span>SOLD ' + subsMoney(o.sold_ea) + ' ea <span style="color:var(--text2)">(' + subsEsc(o.price_basis||'no price') + ')</span></span>'
+    + '<span style="color:var(--amber)">' + subsEsc(o.hours_waiting) + 'h waiting</span>' + pills + '</div>';
+  var c = o.covers || [];
+  if(!c.length){
+    return '<div class="ccard">' + top + '<div style="font-size:10px;color:var(--text2);margin-top:6px">'
+      + (o.tevo_event_id ? 'No sub found yet in pulled listings.' : 'Listings can’t be pulled until the order maps to an event.') + '</div></div>';
+  }
+  var rows = c.map(function(s){
+    var p = s.cover_cost == null ? null : -s.cover_cost;
+    return '<tr><td>' + subsEsc(String(s.source).toUpperCase()) + '</td><td>' + subsEsc(s.section) + '</td><td>' + subsEsc(s.row) + '</td>'
+      + '<td class="num">' + subsEsc(s.qty) + (s.avail && s.avail !== s.qty ? ' <span style="color:var(--text2)">/' + subsEsc(s.avail) + '</span>' : '') + '</td>'
+      + '<td class="num">' + subsMoney(s.ea) + '</td><td class="num">' + subsMoney(s.total) + '</td>'
+      + '<td class="num ' + (p==null ? '' : (p >= 0 ? 'green' : 'red')) + '">' + (p==null ? '–' : (p >= 0 ? '+' : '-') + subsMoney(Math.abs(p))) + '</td>'
+      + '<td>' + subsEsc(s.label) + '</td><td style="color:var(--text2)">' + subsEsc(subsAgo(s.captured_at)||'') + '</td>'
+      + '<td>' + (s.url ? '<a target="_blank" style="color:var(--blue)" href="' + subsEsc(s.url) + '">BUY ↗</a>' : '') + '</td></tr>';
+  }).join('');
+  return '<div class="ccard">' + top + '<div style="overflow-x:auto;margin-top:6px"><table class="etable"><thead><tr>'
+    + '<th>Src</th><th>Sec</th><th>Row</th><th class="num">Qty</th><th class="num">Ea</th><th class="num">Landed</th><th class="num">Profit</th><th>Gate</th><th>Age</th><th></th>'
+    + '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+}
+
+
 // ── CONFIG MODAL ─────────────────────────────────────────
 function openCfg(){
   document.getElementById('cfg-url').value = GAS_URL;
+  document.getElementById('cfg-subs-key').value = subsViewKey();
   document.getElementById('cfg-status').textContent = '';
   document.getElementById('cfg-status').className = 'cfg-status';
   document.getElementById('cfg-overlay').classList.add('open');
@@ -2095,6 +2207,9 @@ function openCfg(){
 function closeCfg(){ document.getElementById('cfg-overlay').classList.remove('open'); }
 
 function saveCfg(){
+  var subsKey = document.getElementById('cfg-subs-key').value.trim();
+  try{ if(subsKey) localStorage.setItem('s4k_subs_view_key', subsKey); else localStorage.removeItem('s4k_subs_view_key'); }catch(e){}
+  if(activeTab==='subs') renderSubsTab(false);
   var url = document.getElementById('cfg-url').value.trim();
   if(!url || !url.startsWith('https://')){ setStatus('err','Invalid URL'); return; }
   GAS_URL = url;
