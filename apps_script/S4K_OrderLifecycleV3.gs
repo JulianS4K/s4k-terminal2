@@ -1,6 +1,7 @@
 /**
  * ============================================================================
- * S4K ORDER LIFECYCLE + STATUS CHECKER  (merged build, Aug 2026; rev Oct 26 2026 — CRM status)
+ * S4K ORDER LIFECYCLE + STATUS CHECKER  v3.4.0  (2026-10-26)
+ * Bump VERSIONV3 + the CHANGELOG below on every change; runAllV3 logs the version.
  * ============================================================================
  *
  * ONE project, ONE lock, ONE cascade. Replaces:
@@ -81,8 +82,19 @@
  *   TickPick API: set TICKPICK_USERNAME + TICKPICK_PASSWORD; tokens are then fetched and
  *   renewed automatically (testTickPickAuthV3). A pasted TICKPICK_API_TOKEN expires ~14 days.
  *   Project time zone must be America/New_York (stale A_Today uses local midnight).
+ *
+ * CHANGELOG
+ *   3.4.0  2026-10-26  Bought / filled / cancelled also drop Need2Buy/WaitToBuy, so the
+ *                      PED row in Supabase closes (sweeps search both need2Buy labels).
+ *   3.3.0  2026-10-26  need2Buy passed: drop the need2Buy labels once the event is 24h+ past.
+ *   3.2.0  2026-10-26  need2Buy subs board retired; Terminal-2's n2b_sync.gs feeds the SUBS page.
+ *   3.1.0  2026-10-26  CRM status lookup (crm_order_status_lookup) replaces the marketplace
+ *                      API pollers; TickPick OAuth token auto-renew.
+ *   3.0.0  2026-08     Merged build (Lifecycle.gs + unified checker).
  * ============================================================================
  */
+
+const VERSIONV3 = '3.4.0';
 
 /* ───────────────────────────── SWITCHES ───────────────────────────── */
 
@@ -195,6 +207,7 @@ const TRIAGEV3 = { soonWindowDays: 5, bufferDays: 0, maxThreads: 500 };
 
 function runAllV3() {
   withScriptLockV3_('runAll', function () {
+    console.log('S4K Order Lifecycle v' + VERSIONV3 + (TEST_MODEV3 ? ' (TEST MODE)' : ''));
     const cascade = [
       ['VIP tagging',      'vip',        _tagVipOrdersV3],
       ['AutoBuy bought',   'autobuy',    _processAutoBuyBoughtV3],
