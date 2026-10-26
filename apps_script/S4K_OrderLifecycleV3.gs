@@ -742,7 +742,8 @@ function _reportNeed2BuyV3() {
     batch.forEach(function (thread) {
       let site = null;
       thread.getLabels().some(function (l) { site = siteByLabel[l.getName().toLowerCase()] || null; return !!site; });
-      if (!site) { noSite++; return; }
+      // No marketplace label: Supabase finds the marketplace from the order # in the CRM.
+      if (!site) { site = 'auto'; noSite++; }
       const so = siteOrderForThreadV3_(thread, site);
       if (!so) { noId++; return; }
       if (so.at && so.at > cutoffMs) { tooNew++; return; }
@@ -756,7 +757,8 @@ function _reportNeed2BuyV3() {
   } while (batch.length === 100 && start < N2B_MAX_THREADSV3);
 
   console.log('need2Buy ' + N2B_MIN_HOURSV3 + 'h+: ' + orders.length + ' order(s)' +
-    (noSite ? ', ' + noSite + ' without a site label' : '') + (noId ? ', ' + noId + ' without Site Order #' : '') +
+    (noSite ? ' (' + noSite + ' with no site label, matched by order # in the CRM)' : '') +
+    (noId ? ', ' + noId + ' without Site Order #' : '') +
     (tooNew ? ', ' + tooNew + ' newer than cutoff' : ''));
   if (!orders.length) return;
   if (TEST_MODEV3) { console.log('🧪 need2Buy: would report ' + orders.length + ' order(s) to Supabase.'); return; }
@@ -766,7 +768,7 @@ function _reportNeed2BuyV3() {
     const r = sbRpcV3_(sbUrl, sbAnon, 'inbox_n2b_report',
       { p_orders: orders.slice(i, i + CRM_CHUNKV3), p_shared_secret: secret });
     (r.orders || []).forEach(function (o) {
-      if (o.tevo_event_id) mapped++; else unmapped.push(o.site + ' ' + o.id);
+      if (o.tevo_event_id) mapped++; else unmapped.push((o.source || o.site) + ' ' + o.id);
     });
     if (r.pull) console.log('need2Buy pulls: ' + JSON.stringify(r.pull));
   }
@@ -832,7 +834,7 @@ function subsPageHtmlV3_() {
 'function card(o){var L=o.listings||{},src=["evo","gotickets","seatgeek"].map(function(s){var a=ago(L[s]);return "<span class=\\"pill "+(a?"ok":"")+"\\">"+s+(a?" "+a:" –")+"</span>";}).join(" ");',
 '  var mail=o.thread_id?"<a target=\\"_blank\\" href=\\"https://mail.google.com/mail/u/0/#all/"+esc(o.thread_id)+"\\">#"+esc(o.order_no||"")+"</a>":"#"+esc(o.order_no||"");',
 '  var head="<div class=\\"top\\"><span class=\\"ev\\">"+esc(o.event_name||o.subject||"(unmapped)")+"</span><span class=\\"muted\\">"+esc(o.event_date||"")+" "+esc(o.venue||"")+"</span></div>"+',
-'    "<div class=\\"top\\">"+mail+"<span>"+esc(o.site)+" "+esc(o.site_order_id)+"</span><span>sec <b>"+esc(o.section||"?")+"</b> row <b>"+esc(o.row||"?")+"</b> × "+esc(o.quantity||"?")+"</span>"+',
+'    "<div class=\\"top\\">"+mail+"<span>"+esc(o.site==="auto"?(o.source||"?"):o.site)+" "+esc(o.site_order_id)+"</span><span>sec <b>"+esc(o.section||"?")+"</b> row <b>"+esc(o.row||"?")+"</b> × "+esc(o.quantity||"?")+"</span>"+',
 '    "<span>sold "+money(o.sold_ea)+" ea <span class=\\"muted\\">("+esc(o.price_basis||"no price")+")</span></span><span class=\\"amber\\">"+esc(o.hours_waiting)+"h waiting</span>"+',
 '    (o.tevo_event_id?src:"<span class=\\"pill bad\\">no event mapping</span>")+"</div>";',
 '  var c=o.covers||[];if(!c.length)return "<div class=\\"card\\">"+head+"<div class=\\"none\\">"+(o.tevo_event_id?"No sub found yet in pulled listings.":"Can\'t pull listings until the order maps to an event.")+"</div></div>";',
@@ -1180,6 +1182,7 @@ function _processTriageRefreshV3() {
     const correct = triageLabelForV3_(daysOut);
     const existing = LABELSV3.triage.filter(function (n) { return lower.indexOf(n.toLowerCase()) !== -1; });
     if (existing.length === 1 && existing[0] === correct) { stats.unchanged++; return; }
+    if (!existing.length && !correct) { stats.unchanged++; return; }   // nothing to add or remove
 
     if (TEST_MODEV3) { console.log('🧪 Triage: ' + eventDate.toDateString() + ' ' + (existing.join(',') || 'none') + ' -> ' + correct); return; }
     existing.forEach(function (n) { removeLabelV3_(thread, n); });
