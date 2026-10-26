@@ -12,6 +12,8 @@
  *   1. AutoBuy POC emails   -> bought           (label _POC, unread)
  *   2. Final SUCCESS emails -> bought | filled  (label SUCCESS, unread)
  *   3. Stale A_Today        -> bought           (prior-day A_Today + Step 2 confirmation, every 12h)
+ *   3b. need2Buy passed     -> drop Need2Buy/WaitToBuy + need2Buy + triage once the event is 24h+
+ *                              past (hourly) — the rule Supabase uses to close the N2B row
  *   4. CRM status           -> filled/cancel/ISSUE (Supabase crm_order_status_lookup; see below)
  *   5. Sweeps: bought+need2Buy -> drop need2Buy;
  *              filled -> drop need2Buy + triage, read, archive (10 threads/run)
@@ -97,6 +99,7 @@ const CADENCE_MINV3 = {
   autobuy:    0,     // AutoBuy POC emails    (cheap, time-sensitive)
   finalsucc:  0,     // Final SUCCESS emails  (cheap, time-sensitive)
   staletoday: 720,   // stale A_Today -> bought via Step 2 confirmation (every 12h)
+  n2bpassed:  60,    // event passed -> drop need2Buy labels (Supabase closes these as 'event passed')
   crm:        30,    // CRM status — one batched RPC; CRM feed itself refreshes every 10 min
   sweep:      0,     // filled cleanup        (cheap)
   triage:     0,     // A_Today/Tomorrow/Soon tagging of new + stale sale threads
@@ -127,6 +130,13 @@ const CRM_CLOSED_IS_FILLEDV3 = true;  // off the CRM open-orders feed => treat a
 const CRM_CANCEL_FALLBACKV3  = 'ISSUE/Cancelled'; // for sites whose SITESV3.canceled is null
 
 const TICKPICK_API_BASEV3 = 'https://api.tickpick.com/1.0';
+
+// need2Buy labels (Terminal-2's n2b_sync.gs reads Need2Buy/WaitToBuy). When the event is
+// more than N2B_PASSED_HOURSV3 past — the rule n2b_ingest_from_apps_script uses to close a
+// row as 'event passed' — these are removed so the thread leaves the N2B book.
+const N2B_LABELSV3       = ['Need2Buy/WaitToBuy', 'need2Buy'];
+const N2B_PASSED_HOURSV3 = 24;
+const N2B_PASSED_MAXV3   = 200;
 
 /* ───────────────────────────── LABELSV3 ───────────────────────────── */
 
@@ -190,6 +200,7 @@ function runAllV3() {
       ['AutoBuy bought',   'autobuy',    _processAutoBuyBoughtV3],
       ['Final SUCCESS',    'finalsucc',  _processFinalSuccessV3],
       ['Stale A_Today',    'staletoday', _processStaleTodayV3],
+      ['need2Buy passed',  'n2bpassed',  _clearPassedNeed2BuyV3],
       ['CRM status',       'crm',        _checkCrmStatusV3],
       ['Filled sweep',     'sweep',      _sweepFilledThreadsV3],
       ['Triage refresh',   'triage',     _processTriageRefreshV3],
@@ -234,6 +245,7 @@ function tagVipOrdersV3()              { withScriptLockV3_('VIP',        _tagVip
 function processAutoBuyBoughtV3()      { withScriptLockV3_('AutoBuy',    _processAutoBuyBoughtV3); }
 function processFinalSuccessV3()       { withScriptLockV3_('FinalSucc',  _processFinalSuccessV3); }
 function processStaleTodayV3()         { withScriptLockV3_('StaleToday', _processStaleTodayV3); }
+function clearPassedNeed2BuyV3()       { withScriptLockV3_('N2BPassed',  _clearPassedNeed2BuyV3); }
 function checkCrmStatusV3()            { withScriptLockV3_('CRM',        _checkCrmStatusV3); }
 function checkTevoOrderStatusV3()      { withScriptLockV3_('TEVO',       _checkTevoV3); }
 function checkVividOrderStatusV3()     { withScriptLockV3_('Vivid',      _checkVividV3); }
@@ -475,6 +487,70 @@ function findOrderConfirmedV3_(orderNo, siteOrder) {
 }
 
 function escapeRegexV3_(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+/* ═════════════════════════ NEED2BUY: EVENT PASSED -> DROP LABEL ═════════════════════════ */
+
+/** Sale threads still carrying a need2Buy label whose event started more than
+ *  N2B_PASSED_HOURSV3 ago lose the need2Buy labels (and triage). Same rule Supabase uses to
+ *  close an N2B row as 'event passed', so the Gmail book and the Terminal SUBS page agree.
+ *  Nothing else on the thread changes (not marked read, not archived). */
+function _clearPassedNeed2BuyV3() {
+  const cutoffMs = Date.now() - N2B_PASSED_HOURSV3 * 3600000;
+  // Gmail search spells a nested label with '-' (as n2b_sync.gs does): Need2Buy/WaitToBuy -> need2buy-waittobuy
+  const q = '(' + N2B_LABELSV3.map(function (l) { return 'label:' + l.toLowerCase().replace(/[\/ ]/g, '-'); }).join(' OR ') + ')' +
+            ' subject:"PEDDLING SALE RECEIVED" before:' + Math.floor(cutoffMs / 1000);
+  const stats = { scanned: 0, cleared: 0, upcoming: 0, noDate: 0 };
+  let start = 0, batch;
+  do {
+    batch = GmailApp.search(q, start, 100);
+    batch.forEach(function (thread) {
+      stats.scanned++;
+      const evMs = eventStartMsForThreadV3_(thread);
+      if (!evMs) { stats.noDate++; return; }
+      if (evMs >= cutoffMs) { stats.upcoming++; return; }
+      const when = Utilities.formatDate(new Date(evMs), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+      if (TEST_MODEV3) { console.log('🧪 need2Buy passed: would drop labels on "' + thread_subjectV3_(thread) + '" (event ' + when + ')'); return; }
+      const removed = removeLabelsCIV3_(thread, N2B_LABELSV3);
+      removeTriageLabelsV3_(thread);
+      if (removed.length) { stats.cleared++; console.log('🧹 event ' + when + ' passed: removed ' + removed.join(', ') + ' from "' + thread_subjectV3_(thread) + '"'); }
+    });
+    start += batch.length;
+  } while (batch.length === 100 && start < N2B_PASSED_MAXV3);
+  console.log('need2Buy passed summary: ' + JSON.stringify(stats));
+}
+
+/** Event start from the sale email ("Event Date 8/6/2026 1:20 PM"), read in the script's
+ *  time zone (America/New_York) as Supabase does. Cached per thread for 6h. */
+function eventStartMsForThreadV3_(thread) {
+  const cache = CacheService.getScriptCache();
+  const ck = 'v3evt_' + thread.getId();
+  const hit = cache.get(ck);
+  if (hit !== null) return hit === '' ? null : Number(hit);
+  const msg = thread.getMessages().filter(function (m) { return /PEDDLING SALE RECEIVED/i.test(m.getSubject()); })[0]
+           || thread.getMessages()[0];
+  const t = msg.getPlainBody().replace(/[|\t\r\n]+/g, ' ');
+  const m = t.match(/Event Date\s+(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})\s*([AP]M))?/i);
+  let ms = null;
+  if (m) {
+    let h = m[4] ? parseInt(m[4], 10) % 12 : 0;
+    if (m[6] && /PM/i.test(m[6])) h += 12;
+    ms = new Date(parseInt(m[3], 10), parseInt(m[1], 10) - 1, parseInt(m[2], 10), h, m[5] ? parseInt(m[5], 10) : 0).getTime();
+  }
+  cache.put(ck, ms === null ? '' : String(ms), 21600);
+  return ms;
+}
+
+/** Remove labels by name, case-insensitively, straight off the thread's own labels. */
+function removeLabelsCIV3_(thread, names) {
+  const want = names.map(function (n) { return n.toLowerCase(); });
+  const removed = [];
+  thread.getLabels().forEach(function (l) {
+    if (want.indexOf(l.getName().toLowerCase()) === -1) return;
+    try { thread.removeLabel(l); removed.push(l.getName()); }
+    catch (e) { console.log('removeLabel("' + l.getName() + '") failed: ' + e.message); }
+  });
+  return removed;
+}
 
 /* ═════════════════════════ TRANSITIONS (single definitions) ═════════════════════════ */
 
