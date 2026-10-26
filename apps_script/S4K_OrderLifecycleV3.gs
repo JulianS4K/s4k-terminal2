@@ -13,6 +13,10 @@
  *   2. Final SUCCESS emails -> bought | filled  (label SUCCESS, unread)
  *   3. Stale A_Today        -> bought           (prior-day A_Today + Step 2 confirmation, every 12h)
  *   4. CRM status           -> filled/cancel/ISSUE (Supabase crm_order_status_lookup; see below)
+ *   4b. need2Buy 12h+       -> reported to Supabase (inbox_n2b_report): mapped to the event via
+ *                              the CRM, EVO/GoTickets/SeatGeek listings pulled by the N2S poller
+ *                              (re-pulled every 5 min), subs matched with the N2S cover gates.
+ *                              Shown on the Subs screen (doGet web app). No labels change.
  *   5. Sweeps: bought+need2Buy -> drop need2Buy;
  *              filled -> drop need2Buy + triage, read, archive (10 threads/run)
  *   6. Triage refresh
@@ -73,6 +77,10 @@
  *      must be SET (the CRM step needs only these). testCrmLookupV3('vivid','<site order #>').
  *   4. TEST_MODEV3 = true, run runAllV3() manually, read logs, flip to false.
  *   5. installAllTriggersV3().
+ *   6. Subs screen: Deploy > New deployment > Web app, Execute as: Me, Who has access:
+ *      Only myself. Open the /exec URL. (doGet must be the only doGet in the project.)
+ *   TickPick API: set TICKPICK_USERNAME + TICKPICK_PASSWORD; tokens are then fetched and
+ *   renewed automatically (testTickPickAuthV3). A pasted TICKPICK_API_TOKEN expires ~14 days.
  *   Project time zone must be America/New_York (stale A_Today uses local midnight).
  * ============================================================================
  */
@@ -93,6 +101,7 @@ const CADENCE_MINV3 = {
   finalsucc:  0,     // Final SUCCESS emails  (cheap, time-sensitive)
   staletoday: 720,   // stale A_Today -> bought via Step 2 confirmation (every 12h)
   crm:        30,    // CRM status — one batched RPC; CRM feed itself refreshes every 10 min
+  n2b:        30,    // report need2Buy 12h+ to Supabase -> listing pulls -> Subs screen
   sweep:      0,     // filled cleanup        (cheap)
   triage:     0,     // A_Today/Tomorrow/Soon tagging of new + stale sale threads
   tevo:       120,   // API pollers — manual entry points only (no longer in the cascade)
@@ -120,6 +129,13 @@ const CRM_MAX_PER_SITEV3     = 60;    // threads per site per run; rotates throu
 const CRM_CHUNKV3            = 200;   // orders per RPC call (server max 500)
 const CRM_CLOSED_IS_FILLEDV3 = true;  // off the CRM open-orders feed => treat as filled
 const CRM_CANCEL_FALLBACKV3  = 'ISSUE/Cancelled'; // for sites whose SITESV3.canceled is null
+
+// need2Buy -> subs board
+const N2B_MIN_HOURSV3   = 12;    // report sale threads still need2Buy this long after the sale
+const N2B_MAX_THREADSV3 = 300;   // per run
+const SUBS_PER_ORDERV3  = 3;     // sub options shown per order on the Subs screen
+
+const TICKPICK_API_BASEV3 = 'https://api.tickpick.com/1.0';
 
 /* ───────────────────────────── LABELSV3 ───────────────────────────── */
 
@@ -184,6 +200,7 @@ function runAllV3() {
       ['Final SUCCESS',    'finalsucc',  _processFinalSuccessV3],
       ['Stale A_Today',    'staletoday', _processStaleTodayV3],
       ['CRM status',       'crm',        _checkCrmStatusV3],
+      ['need2Buy 12h+',    'n2b',        _reportNeed2BuyV3],
       ['Filled sweep',     'sweep',      _sweepFilledThreadsV3],
       ['Triage refresh',   'triage',     _processTriageRefreshV3],
     ];
@@ -228,6 +245,7 @@ function processAutoBuyBoughtV3()      { withScriptLockV3_('AutoBuy',    _proces
 function processFinalSuccessV3()       { withScriptLockV3_('FinalSucc',  _processFinalSuccessV3); }
 function processStaleTodayV3()         { withScriptLockV3_('StaleToday', _processStaleTodayV3); }
 function checkCrmStatusV3()            { withScriptLockV3_('CRM',        _checkCrmStatusV3); }
+function reportNeed2BuyV3()            { withScriptLockV3_('need2Buy',   _reportNeed2BuyV3); }
 function checkTevoOrderStatusV3()      { withScriptLockV3_('TEVO',       _checkTevoV3); }
 function checkVividOrderStatusV3()     { withScriptLockV3_('Vivid',      _checkVividV3); }
 function checkSeatGeekOrderStatusV3()  { withScriptLockV3_('SeatGeek',   _checkSeatGeekV3); }
@@ -544,18 +562,19 @@ function crmThreadsForSiteV3_(props, k, cfg) {
   return threads;
 }
 
-/** Site Order # (+ event date) from the sale email body, cached per thread for 6h so
- *  repeat runs don't re-read every body. */
+/** Site Order # (+ event date, sale date) from the sale email, cached per thread for 6h
+ *  so repeat runs don't re-read every body. */
 function siteOrderForThreadV3_(thread, k) {
   const cache = CacheService.getScriptCache();
-  const ck = 'v3so_' + thread.getId();
+  const ck = 'v3so2_' + thread.getId();
   const hit = cache.get(ck);
   if (hit) { try { return JSON.parse(hit); } catch (e) {} }
-  const body = thread.getMessages()[0].getPlainBody();
+  const msg = thread.getMessages()[0];
+  const body = msg.getPlainBody();
   const id = extractOrderIdV3_(body, CRM_ORDER_PATTERNSV3[k] || CRM_ORDER_PATTERNSV3._default);
   if (!id) return null;
   const ev = parseEventDateV3_(body);
-  const so = { id: id, ev: ev ? ev.getTime() : null };
+  const so = { id: id, ev: ev ? ev.getTime() : null, at: msg.getDate().getTime() };
   cache.put(ck, JSON.stringify(so), 21600);
   return so;
 }
@@ -692,6 +711,140 @@ function testCrmLookupV3(site, id) {
       (x.crm_status ? ' (' + x.crm_status + ')' : '') + crmDetailV3_(x) +
       ' | ' + String(orders[i].subject).substring(0, 70));
   });
+}
+
+/* ═════════════════════════ NEED2BUY 12H+ -> SUBS ═════════════════════════ */
+
+/** Sale threads still need2Buy N2B_MIN_HOURSV3+ after the sale are reported to Supabase
+ *  (inbox_n2b_report). Supabase maps each to its TEVO event via the CRM, pulls EVO /
+ *  GoTickets / SeatGeek listings through the N2S poller (and re-pulls every 5 min while
+ *  the order keeps being reported), and matches subs with the N2S cover gates. The
+ *  Subs screen (doGet) shows the result. Gmail labels are not touched here. */
+function _reportNeed2BuyV3() {
+  const props = PropertiesService.getScriptProperties();
+  const sbUrl  = (props.getProperty('SUPABASE_PROJECT_URL')    || '').trim();
+  const sbAnon = (props.getProperty('SUPABASE_ANON_KEY')       || '').trim();
+  const secret = (props.getProperty('APPSCRIPT_INGEST_SECRET') || '').trim();
+  if (!sbUrl || !sbAnon || !secret) { console.log('need2Buy: missing Supabase properties, skipping.'); return; }
+
+  const cutoffMs = Date.now() - N2B_MIN_HOURSV3 * 3600000;
+  let q = 'label:"' + LABELSV3.need2buy + '" -label:"' + LABELSV3.bought + '" -label:"' + LABELSV3.filledParent + '"';
+  Object.keys(SITESV3).forEach(function (k) { q += ' -label:"' + SITESV3[k].filled + '"'; });
+  q += ' subject:"PEDDLING SALE RECEIVED" label:inbox before:' + Math.floor(cutoffMs / 1000);
+
+  const siteByLabel = {};
+  Object.keys(SITESV3).forEach(function (k) { siteByLabel[SITESV3[k].siteLabel.toLowerCase()] = k; });
+
+  const orders = [];
+  let noSite = 0, noId = 0, tooNew = 0, start = 0, batch;
+  do {
+    batch = GmailApp.search(q, start, 100);
+    batch.forEach(function (thread) {
+      let site = null;
+      thread.getLabels().some(function (l) { site = siteByLabel[l.getName().toLowerCase()] || null; return !!site; });
+      if (!site) { noSite++; return; }
+      const so = siteOrderForThreadV3_(thread, site);
+      if (!so) { noId++; return; }
+      if (so.at && so.at > cutoffMs) { tooNew++; return; }
+      const subject = thread_subjectV3_(thread);
+      const on = subject.match(/PEDDLING SALE RECEIVED\s+(\d+)/i);
+      const total = parseSaleTotalV3_(subject, '');
+      orders.push({ site: site, id: so.id, order_no: on ? on[1] : null, thread_id: thread.getId(),
+        subject: subject, total: total === null ? null : String(total), sale_at_ms: so.at || null });
+    });
+    start += batch.length;
+  } while (batch.length === 100 && start < N2B_MAX_THREADSV3);
+
+  console.log('need2Buy ' + N2B_MIN_HOURSV3 + 'h+: ' + orders.length + ' order(s)' +
+    (noSite ? ', ' + noSite + ' without a site label' : '') + (noId ? ', ' + noId + ' without Site Order #' : '') +
+    (tooNew ? ', ' + tooNew + ' newer than cutoff' : ''));
+  if (!orders.length) return;
+  if (TEST_MODEV3) { console.log('🧪 need2Buy: would report ' + orders.length + ' order(s) to Supabase.'); return; }
+
+  let mapped = 0, unmapped = [];
+  for (let i = 0; i < orders.length; i += CRM_CHUNKV3) {
+    const r = sbRpcV3_(sbUrl, sbAnon, 'inbox_n2b_report',
+      { p_orders: orders.slice(i, i + CRM_CHUNKV3), p_shared_secret: secret });
+    (r.orders || []).forEach(function (o) {
+      if (o.tevo_event_id) mapped++; else unmapped.push(o.site + ' ' + o.id);
+    });
+    if (r.pull) console.log('need2Buy pulls: ' + JSON.stringify(r.pull));
+  }
+  console.log('need2Buy: ' + mapped + ' mapped to an event' +
+    (unmapped.length ? ', ' + unmapped.length + ' unmapped: ' + unmapped.slice(0, 20).join(', ') : ''));
+}
+
+/* ── Subs screen: deploy this project as a web app (Execute as: me, Access: only myself) ── */
+
+function doGet() {
+  return HtmlService.createHtmlOutput(subsPageHtmlV3_())
+    .setTitle('S4K Subs')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/** Called from the Subs page. refresh=true re-reports need2Buy first (also re-pulls). */
+function getSubsBoardV3(refresh) {
+  if (refresh) reportNeed2BuyV3();
+  const props = PropertiesService.getScriptProperties();
+  return sbRpcV3_((props.getProperty('SUPABASE_PROJECT_URL') || '').trim(),
+    (props.getProperty('SUPABASE_ANON_KEY') || '').trim(), 'inbox_n2b_board',
+    { p_shared_secret: (props.getProperty('APPSCRIPT_INGEST_SECRET') || '').trim(), p_per_order: SUBS_PER_ORDERV3 });
+}
+
+function subsPageHtmlV3_() {
+  return [
+'<!doctype html><html><head><meta charset="utf-8"><title>S4K Subs</title>',
+'<style>',
+':root{--bg:#0b0d0d;--bg1:#121515;--bg2:#1a1e1e;--bd:#262b2b;--tx:#c9d2d2;--tx2:#7a8585;--amber:#f5a623;--green:#3dd68c;--red:#e05252;--blue:#4da3f5}',
+'*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:13px/1.4 "IBM Plex Mono",ui-monospace,Menlo,monospace}',
+'header{position:sticky;top:0;z-index:2;background:var(--bg1);border-bottom:1px solid var(--bd);padding:10px 16px;display:flex;flex-wrap:wrap;gap:12px;align-items:center}',
+'h1{font-size:14px;margin:0;color:var(--amber);letter-spacing:.12em}.stat{color:var(--tx2)}.stat b{color:var(--tx)}',
+'button,input{font:inherit;background:var(--bg2);color:var(--tx);border:1px solid var(--bd);border-radius:3px;padding:4px 10px}button{cursor:pointer}button:hover{border-color:var(--amber)}',
+'label{color:var(--tx2);display:flex;gap:6px;align-items:center}main{padding:12px 16px;display:grid;gap:10px}',
+'.card{background:var(--bg1);border:1px solid var(--bd);border-radius:4px;padding:10px 12px;min-width:0}',
+'.top{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline}.ev{font-weight:600}.muted{color:var(--tx2)}.amber{color:var(--amber)}',
+'.pill{font-size:11px;padding:1px 6px;border-radius:3px;background:var(--bg2);border:1px solid var(--bd);color:var(--tx2)}',
+'.pill.ok{color:var(--green);border-color:#1f5a3c}.pill.bad{color:var(--red);border-color:#5a1f1f}',
+'table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}th,td{text-align:left;padding:4px 6px;border-top:1px solid var(--bd);white-space:nowrap}th{color:var(--tx2);font-weight:400}',
+'td.num{text-align:right}.profit{color:var(--green)}.loss{color:var(--red)}a{color:var(--blue)}',
+'.wrap{overflow-x:auto}.none{color:var(--tx2);margin-top:6px}#err{color:var(--red)}',
+'</style></head><body>',
+'<header><h1>S4K SUBS</h1><span class="stat" id="stats">loading…</span>',
+'<label><input type="checkbox" id="only"> only with subs</label>',
+'<input id="q" placeholder="filter: event, order #, site" size="28">',
+'<button id="refresh" title="Re-scan the inbox for need2Buy 12h+ and re-pull listings">Re-scan + pull</button>',
+'<span class="stat" id="gen"></span><span id="err"></span></header>',
+'<main id="list"></main>',
+'<script>',
+'var DATA=null;',
+'function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}',
+'function money(n){return n==null?"–":"$"+Number(n).toFixed(2);}',
+'function ago(t){if(!t)return null;var m=Math.round((Date.now()-new Date(t).getTime())/60000);return m<60?m+"m":Math.round(m/60)+"h";}',
+'function load(refresh){document.getElementById("err").textContent="";document.getElementById("gen").textContent=refresh?"re-scanning…":"loading…";',
+'  google.script.run.withSuccessHandler(function(d){DATA=d;render();}).withFailureHandler(function(e){document.getElementById("err").textContent=" "+e.message;document.getElementById("gen").textContent="";}).getSubsBoardV3(!!refresh);}',
+'function render(){if(!DATA)return;var only=document.getElementById("only").checked,q=document.getElementById("q").value.toLowerCase();',
+'  var all=DATA.orders||[],withSubs=all.filter(function(o){return o.covers&&o.covers.length;}).length,unm=all.filter(function(o){return !o.tevo_event_id;}).length;',
+'  document.getElementById("stats").innerHTML="<b>"+all.length+"</b> need2Buy 12h+ · <b>"+withSubs+"</b> with subs · <b>"+unm+"</b> unmapped";',
+'  document.getElementById("gen").textContent="updated "+new Date(DATA.generated_at).toLocaleTimeString();',
+'  var html=all.filter(function(o){if(only&&!(o.covers&&o.covers.length))return false;if(!q)return true;',
+'    return [o.event_name,o.order_no,o.site,o.site_order_id,o.venue].join(" ").toLowerCase().indexOf(q)!==-1;}).map(card).join("");',
+'  document.getElementById("list").innerHTML=html||"<div class=\\"card muted\\">Nothing to show.</div>";}',
+'function card(o){var L=o.listings||{},src=["evo","gotickets","seatgeek"].map(function(s){var a=ago(L[s]);return "<span class=\\"pill "+(a?"ok":"")+"\\">"+s+(a?" "+a:" –")+"</span>";}).join(" ");',
+'  var mail=o.thread_id?"<a target=\\"_blank\\" href=\\"https://mail.google.com/mail/u/0/#all/"+esc(o.thread_id)+"\\">#"+esc(o.order_no||"")+"</a>":"#"+esc(o.order_no||"");',
+'  var head="<div class=\\"top\\"><span class=\\"ev\\">"+esc(o.event_name||o.subject||"(unmapped)")+"</span><span class=\\"muted\\">"+esc(o.event_date||"")+" "+esc(o.venue||"")+"</span></div>"+',
+'    "<div class=\\"top\\">"+mail+"<span>"+esc(o.site)+" "+esc(o.site_order_id)+"</span><span>sec <b>"+esc(o.section||"?")+"</b> row <b>"+esc(o.row||"?")+"</b> × "+esc(o.quantity||"?")+"</span>"+',
+'    "<span>sold "+money(o.sold_ea)+" ea <span class=\\"muted\\">("+esc(o.price_basis||"no price")+")</span></span><span class=\\"amber\\">"+esc(o.hours_waiting)+"h waiting</span>"+',
+'    (o.tevo_event_id?src:"<span class=\\"pill bad\\">no event mapping</span>")+"</div>";',
+'  var c=o.covers||[];if(!c.length)return "<div class=\\"card\\">"+head+"<div class=\\"none\\">"+(o.tevo_event_id?"No sub found yet in pulled listings.":"Can\'t pull listings until the order maps to an event.")+"</div></div>";',
+'  var rows=c.map(function(s){var p=s.cover_cost==null?null:-s.cover_cost;return "<tr><td>"+esc(s.source)+"</td><td>"+esc(s.section)+"</td><td>"+esc(s.row)+"</td><td class=\\"num\\">"+esc(s.qty)+(s.avail&&s.avail!==s.qty?" <span class=\\"muted\\">/"+esc(s.avail)+"</span>":"")+"</td>"+',
+'    "<td class=\\"num\\">"+money(s.ea)+"</td><td class=\\"num\\">"+money(s.total)+"</td><td class=\\"num "+(p==null?"":(p>=0?"profit":"loss"))+"\\">"+(p==null?"–":(p>=0?"+":"")+money(p).replace("$-","-$"))+"</td>"+',
+'    "<td>"+esc(s.label)+"</td><td class=\\"muted\\">"+esc(ago(s.captured_at)||"")+"</td><td>"+(s.url?"<a target=\\"_blank\\" href=\\""+esc(s.url)+"\\">open</a>":"")+"</td></tr>";}).join("");',
+'  return "<div class=\\"card\\">"+head+"<div class=\\"wrap\\"><table><tr><th>src</th><th>sec</th><th>row</th><th>qty</th><th>ea</th><th>landed</th><th>profit</th><th>gate</th><th>age</th><th></th></tr>"+rows+"</table></div></div>";}',
+'document.getElementById("only").onchange=render;document.getElementById("q").oninput=render;',
+'document.getElementById("refresh").onclick=function(){load(true);};',
+'load(false);setInterval(function(){load(false);},60000);',
+'</script></body></html>'
+  ].join('\n');
 }
 
 /* ═════════════════════════ API POLLERS (manual entry points only) ═════════════════════════ */
@@ -866,9 +1019,7 @@ function _checkSeatGeekV3() {
 
 function _checkTickPickV3() {
   const cfg = SITESV3.tickpick;
-  let token = PropertiesService.getScriptProperties().getProperty('TICKPICK_API_TOKEN');
-  if (!token) { console.log('TickPick: missing creds, skipping.'); return; }
-  token = token.trim();
+  if (!tickPickTokenV3_()) { console.log('TickPick: missing creds, skipping.'); return; }
 
   const threads = GmailApp.search(pollerQueryV3_(cfg), 0, 20);
   if (!threads.length) { console.log('TickPick: inbox clear.'); return; }
@@ -878,8 +1029,7 @@ function _checkTickPickV3() {
     const orderId = extractOrderIdV3_(body, CRM_ORDER_PATTERNSV3.tickpick);
     if (!orderId) { console.log('TickPick: no Order # in body.'); return; }
     try {
-      const resp = UrlFetchApp.fetch('https://api.tickpick.com/1.0/orders/' + orderId + '/details',
-        { method: 'get', headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }, muteHttpExceptions: true });
+      const resp = tickPickGetV3_('/orders/' + orderId + '/details');
       const code = resp.getResponseCode(), text = resp.getContentText();
       if (code === 200) {
         const json = JSON.parse(text);
@@ -1114,13 +1264,13 @@ function removeLabelV3_(thread, name) {
 
 function _syncTickPickToSupabaseV3() {
   const props = PropertiesService.getScriptProperties();
-  const TP_TOKEN  = (props.getProperty('TICKPICK_API_TOKEN')      || '').trim();
+  const TP_TOKEN  = tickPickTokenV3_();
   const SB_URL    = (props.getProperty('SUPABASE_PROJECT_URL')    || '').trim();
   const SB_ANON   = (props.getProperty('SUPABASE_ANON_KEY')       || '').trim();
   const INGEST_SK = (props.getProperty('APPSCRIPT_INGEST_SECRET') || '').trim();
   if (!TP_TOKEN || !SB_URL || !SB_ANON || !INGEST_SK) { console.log('Supabase sync: missing properties, skipping.'); return; }
 
-  const orders = tpFetchOrdersListV3_(TP_TOKEN, 'unfulfilled');
+  const orders = tpFetchOrdersListV3_('unfulfilled');
   console.log('TickPick unfulfilled → ' + orders.length);
   if (!orders.length) return;
   if (TEST_MODEV3) { console.log('🧪 Would POST ' + orders.length + ' orders.'); return; }
@@ -1133,9 +1283,60 @@ function _syncTickPickToSupabaseV3() {
   console.log('SYNC COMPLETE ' + JSON.stringify(totals));
 }
 
-function tpFetchOrdersListV3_(token, status) {
-  const resp = UrlFetchApp.fetch('https://api.tickpick.com/1.0/orders?status=' + encodeURIComponent(status),
-    { method: 'get', headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }, muteHttpExceptions: true });
+/** TickPick bearer token. TickPick tokens are OAuth password-grant tokens that expire
+ *  (~14 days), so a pasted TICKPICK_API_TOKEN goes 401 on its own. With
+ *  TICKPICK_USERNAME + TICKPICK_PASSWORD set, a fresh token is fetched from POST /token
+ *  and cached until shortly before it expires; otherwise the pasted token is used. */
+function tickPickTokenV3_(forceRefresh) {
+  const props = PropertiesService.getScriptProperties();
+  const cache = CacheService.getScriptCache();
+  const user = (props.getProperty('TICKPICK_USERNAME') || '').trim();
+  const pass = (props.getProperty('TICKPICK_PASSWORD') || '').trim();
+  if (!user || !pass) return (props.getProperty('TICKPICK_API_TOKEN') || '').replace('Bearer ', '').trim();
+
+  if (!forceRefresh) {
+    const cached = cache.get('v3_tp_token');
+    if (cached) return cached;
+    const stored = props.getProperty('v3_tp_token'), exp = Number(props.getProperty('v3_tp_token_exp') || 0);
+    if (stored && exp > Date.now() + 600000) { cache.put('v3_tp_token', stored, 21600); return stored; }
+  }
+  const resp = UrlFetchApp.fetch(TICKPICK_API_BASEV3 + '/token', {
+    method: 'post', contentType: 'application/x-www-form-urlencoded',
+    payload: 'grant_type=password&username=' + encodeURIComponent(user) + '&password=' + encodeURIComponent(pass),
+    muteHttpExceptions: true });
+  if (resp.getResponseCode() !== 200) {
+    throw new Error('TickPick /token HTTP ' + resp.getResponseCode() + ' ' + resp.getContentText().substring(0, 200));
+  }
+  const json = JSON.parse(resp.getContentText());
+  const token = json.access_token, ttlSec = Number(json.expires_in) || 3600;
+  if (!token) throw new Error('TickPick /token: no access_token in response');
+  props.setProperties({ v3_tp_token: token, v3_tp_token_exp: String(Date.now() + ttlSec * 1000) });
+  cache.put('v3_tp_token', token, Math.max(60, Math.min(21600, ttlSec - 600)));
+  console.log('TickPick: fetched new token (expires in ' + Math.round(ttlSec / 86400) + ' days)');
+  return token;
+}
+
+/** GET against the TickPick API; on 401 refreshes the token once and retries. */
+function tickPickGetV3_(path) {
+  const go = function (token) {
+    return UrlFetchApp.fetch(TICKPICK_API_BASEV3 + path,
+      { method: 'get', headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }, muteHttpExceptions: true });
+  };
+  let resp = go(tickPickTokenV3_());
+  if (resp.getResponseCode() === 401 && PropertiesService.getScriptProperties().getProperty('TICKPICK_USERNAME')) {
+    resp = go(tickPickTokenV3_(true));
+  }
+  return resp;
+}
+
+/** Manual check that TickPick auth works: fetches a token and one page of orders. */
+function testTickPickAuthV3() {
+  const resp = tickPickGetV3_('/orders?status=unfulfilled');
+  console.log('TickPick /orders?status=unfulfilled -> HTTP ' + resp.getResponseCode() + ' ' + resp.getContentText().substring(0, 300));
+}
+
+function tpFetchOrdersListV3_(status) {
+  const resp = tickPickGetV3_('/orders?status=' + encodeURIComponent(status));
   if (resp.getResponseCode() !== 200) throw new Error('TickPick list fetch failed: HTTP ' + resp.getResponseCode());
   const json = JSON.parse(resp.getContentText());
   if (Array.isArray(json)) return json;
@@ -1162,6 +1363,7 @@ function setCredentialsV3() {
     'TEVO_API_TOKEN': 'PASTE_OR_LEAVE', 'TEVO_API_SECRET': 'PASTE_OR_LEAVE',
     'VIVID_API_TOKEN': 'PASTE_OR_LEAVE', 'VIVID_AUTOMATOR_TOKEN': 'PASTE_OR_LEAVE',
     'SEATGEEK_API_TOKEN': 'PASTE_OR_LEAVE', 'TICKPICK_API_TOKEN': 'PASTE_OR_LEAVE',
+    'TICKPICK_USERNAME': 'PASTE_OR_LEAVE', 'TICKPICK_PASSWORD': 'PASTE_OR_LEAVE',
     'GOTICKETS_ACCESS_ID': 'PASTE_OR_LEAVE', 'GOTICKETS_API_SECRET': 'PASTE_OR_LEAVE',
     'SUPABASE_PROJECT_URL': 'PASTE_OR_LEAVE', 'SUPABASE_ANON_KEY': 'PASTE_OR_LEAVE',
     'APPSCRIPT_INGEST_SECRET': 'PASTE_OR_LEAVE',
@@ -1220,7 +1422,8 @@ function diagnoseLabelsV3() {
 function diagnoseSetupV3() {
   const props = PropertiesService.getScriptProperties().getProperties();
   ['TEVO_API_TOKEN', 'TEVO_API_SECRET', 'VIVID_API_TOKEN', 'VIVID_AUTOMATOR_TOKEN', 'SEATGEEK_API_TOKEN',
-   'TICKPICK_API_TOKEN', 'GOTICKETS_ACCESS_ID', 'GOTICKETS_API_SECRET', 'SUPABASE_PROJECT_URL',
+   'TICKPICK_API_TOKEN', 'TICKPICK_USERNAME', 'TICKPICK_PASSWORD',
+   'GOTICKETS_ACCESS_ID', 'GOTICKETS_API_SECRET', 'SUPABASE_PROJECT_URL',
    'SUPABASE_ANON_KEY', 'APPSCRIPT_INGEST_SECRET'].forEach(function (k) {
     console.log(k + ': ' + (props[k] ? 'SET (' + props[k].length + ' chars)' : '!! MISSING'));
   });
