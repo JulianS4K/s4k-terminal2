@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * S4K ORDER LIFECYCLE + STATUS CHECKER  v3.4.0  (2026-10-26)
+ * S4K ORDER LIFECYCLE + STATUS CHECKER  v3.5.0  (2026-10-27)
  * Bump VERSIONV3 + the CHANGELOG below on every change; runAllV3 logs the version.
  * ============================================================================
  *
@@ -13,6 +13,7 @@
  *   1. AutoBuy POC emails   -> bought           (label _POC, unread)
  *   2. Final SUCCESS emails -> bought | filled  (label SUCCESS, unread)
  *   3. Stale A_Today        -> bought           (prior-day A_Today + Step 2 confirmation, every 12h)
+ *   3a. need2Buy confirmed  -> bought           (need2Buy sale + Step 2 Order Confirmed email, 15 min)
  *   3b. need2Buy passed     -> drop Need2Buy/WaitToBuy + need2Buy + triage once the event is 24h+
  *                              past (hourly) — the rule Supabase uses to close the N2B row
  *   4. CRM status           -> filled/cancel/ISSUE (Supabase crm_order_status_lookup; see below)
@@ -84,6 +85,9 @@
  *   Project time zone must be America/New_York (stale A_Today uses local midnight).
  *
  * CHANGELOG
+ *   3.5.0  2026-10-27  need2Buy confirmed: a need2Buy sale whose "[SUCCESS] [Step 2/x] Order
+ *                      Confirmed" email exists (same Order # + Site Order #) -> bought,
+ *                      dropping Need2Buy/WaitToBuy. Any age, not just stale A_Today.
  *   3.4.0  2026-10-26  Bought / filled / cancelled also drop Need2Buy/WaitToBuy, so the
  *                      PED row in Supabase closes (sweeps search both need2Buy labels).
  *   3.3.0  2026-10-26  need2Buy passed: drop the need2Buy labels once the event is 24h+ past.
@@ -94,7 +98,7 @@
  * ============================================================================
  */
 
-const VERSIONV3 = '3.4.0';
+const VERSIONV3 = '3.5.0';
 
 /* ───────────────────────────── SWITCHES ───────────────────────────── */
 
@@ -110,6 +114,7 @@ const CADENCE_MINV3 = {
   vip:        0,     // tag new sales over VIP_THRESHOLDV3 (cheap, only scans new mail)
   autobuy:    0,     // AutoBuy POC emails    (cheap, time-sensitive)
   finalsucc:  0,     // Final SUCCESS emails  (cheap, time-sensitive)
+  n2bconfirm: 15,    // need2Buy sale + Step 2 Order Confirmed -> bought
   staletoday: 720,   // stale A_Today -> bought via Step 2 confirmation (every 12h)
   n2bpassed:  60,    // event passed -> drop need2Buy labels (Supabase closes these as 'event passed')
   crm:        30,    // CRM status — one batched RPC; CRM feed itself refreshes every 10 min
@@ -213,6 +218,7 @@ function runAllV3() {
       ['AutoBuy bought',   'autobuy',    _processAutoBuyBoughtV3],
       ['Final SUCCESS',    'finalsucc',  _processFinalSuccessV3],
       ['Stale A_Today',    'staletoday', _processStaleTodayV3],
+      ['need2Buy confirmed', 'n2bconfirm', _processNeed2BuyConfirmedV3],
       ['need2Buy passed',  'n2bpassed',  _clearPassedNeed2BuyV3],
       ['CRM status',       'crm',        _checkCrmStatusV3],
       ['Filled sweep',     'sweep',      _sweepFilledThreadsV3],
@@ -500,6 +506,50 @@ function findOrderConfirmedV3_(orderNo, siteOrder) {
 }
 
 function escapeRegexV3_(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+/* ═════════════════════════ NEED2BUY: STEP 2 CONFIRMED -> BOUGHT ═════════════════════════ */
+
+const N2B_CONFIRM_MAXV3 = 100;   // need2Buy threads checked per run
+
+/** need2Buy sale threads (Need2Buy/WaitToBuy or need2Buy, not yet bought): if a
+ *  "Order #N | [SUCCESS] [Step 2/x] Order Confirmed" email exists for the same
+ *  Order # + Site Order #, mark bought (adds `bought`, drops the need2Buy labels,
+ *  so the PED row in Supabase closes) and mark the confirmation read. Same rule
+ *  as stale A_Today, but for need2Buy sales of any age. */
+function _processNeed2BuyConfirmedV3() {
+  const threads = GmailApp.search(
+    need2BuySearchV3_() + ' -label:' + LABELSV3.bought + ' subject:"PEDDLING SALE RECEIVED"',
+    0, N2B_CONFIRM_MAXV3);
+  console.log('need2Buy confirmed: ' + threads.length + ' open need2Buy thread(s)');
+  const stats = { noIds: 0, noConfirm: 0, bought: 0, failed: 0 };
+  const done = {};
+
+  threads.forEach(function (thread) {
+    const msg = thread.getMessages().filter(function (m) { return /PEDDLING SALE RECEIVED/i.test(m.getSubject()); })[0]
+             || thread.getMessages()[0];
+    const subject = msg.getSubject();
+    const o = subject.match(/PEDDLING SALE RECEIVED\s+(\d+)/i);
+    const s = msg.getPlainBody().match(/Site Order\s*#\s*([A-Za-z0-9\-]+)/i);
+    if (!o || !s) { stats.noIds++; return; }
+    const orderNo = o[1], siteOrder = s[1].trim();
+    if (done[orderNo]) return;
+    done[orderNo] = true;
+
+    const confirm = findOrderConfirmedV3_(orderNo, siteOrder);
+    if (!confirm) { stats.noConfirm++; return; }
+
+    let sales = findSaleThreadsV3_(orderNo);   // catches split "Re:" threads too
+    if (!sales.length) sales = [thread];
+
+    if (TEST_MODEV3) { console.log('🧪 need2Buy ' + orderNo + ' (' + siteOrder + '): Step 2 confirmed, would mark BOUGHT on ' + sales.length + ' thread(s)'); return; }
+    if (sales.every(markBoughtV3_)) {
+      confirm.markRead();
+      stats.bought++;
+      console.log('✅ need2Buy ' + orderNo + ' (' + siteOrder + '): Step 2 confirmed -> bought');
+    } else stats.failed++;
+  });
+  console.log('need2Buy confirmed summary: ' + JSON.stringify(stats));
+}
 
 /* ═════════════════════════ NEED2BUY: EVENT PASSED -> DROP LABEL ═════════════════════════ */
 
