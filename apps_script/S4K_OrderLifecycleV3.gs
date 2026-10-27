@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * S4K ORDER LIFECYCLE + STATUS CHECKER  v3.5.2  (2026-10-27)
+ * S4K ORDER LIFECYCLE + STATUS CHECKER  v3.6.0  (2026-10-27)
  * Bump VERSIONV3 + the CHANGELOG below on every change; runAllV3 logs the version.
  * ============================================================================
  *
@@ -13,6 +13,7 @@
  *   1. AutoBuy POC emails   -> bought           (label _POC, unread)
  *   2. Final SUCCESS emails -> bought | filled  (label SUCCESS, unread)
  *   3. Stale A_Today        -> bought           (prior-day A_Today + Step 2 confirmation, every 12h)
+ *   (3a/3b moved to Supabase + S4K_GmailRelay.gs in v3.6.0; kept here as manual one-offs)
  *   3a. need2Buy confirmed  -> bought           (need2Buy sale + Step 2+ SUCCESS email, 30 min)
  *   3b. need2Buy passed     -> drop Need2Buy/WaitToBuy + need2Buy + triage once the event is 24h+
  *                              past (hourly) — the rule Supabase uses to close the N2B row
@@ -85,6 +86,9 @@
  *   Project time zone must be America/New_York (stale A_Today uses local midnight).
  *
  * CHANGELOG
+ *   3.6.0  2026-10-27  need2Buy confirmed (3a) and need2Buy passed (3b) leave the cascade:
+ *                      Supabase decides them now and S4K_GmailRelay.gs applies the labels
+ *                      every minute. Both functions stay as manual one-offs.
  *   3.5.2  2026-10-27  Gmail quota: need2Buy confirmed caches each sale's Order # / Site
  *                      Order # and finds Step 2+ SUCCESS emails in batched searches (20 per
  *                      search) instead of one search per thread; cadence 15 -> 30 min.
@@ -103,7 +107,7 @@
  * ============================================================================
  */
 
-const VERSIONV3 = '3.5.2';
+const VERSIONV3 = '3.6.0';
 
 /* ───────────────────────────── SWITCHES ───────────────────────────── */
 
@@ -223,8 +227,8 @@ function runAllV3() {
       ['AutoBuy bought',   'autobuy',    _processAutoBuyBoughtV3],
       ['Final SUCCESS',    'finalsucc',  _processFinalSuccessV3],
       ['Stale A_Today',    'staletoday', _processStaleTodayV3],
-      ['need2Buy confirmed', 'n2bconfirm', _processNeed2BuyConfirmedV3],
-      ['need2Buy passed',  'n2bpassed',  _clearPassedNeed2BuyV3],
+      // need2Buy confirmed / passed moved to Supabase (S4K_GmailRelay.gs, v3.6.0);
+      // _processNeed2BuyConfirmedV3 / _clearPassedNeed2BuyV3 stay as manual one-offs.
       ['CRM status',       'crm',        _checkCrmStatusV3],
       ['Filled sweep',     'sweep',      _sweepFilledThreadsV3],
       ['Triage refresh',   'triage',     _processTriageRefreshV3],
