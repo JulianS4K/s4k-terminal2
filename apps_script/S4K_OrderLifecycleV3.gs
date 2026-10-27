@@ -1,6 +1,7 @@
 /**
  * ============================================================================
- * S4K ORDER LIFECYCLE + STATUS CHECKER  (merged build, Aug 2026; rev Oct 26 2026 — CRM status)
+ * S4K ORDER LIFECYCLE + STATUS CHECKER  v3.6.0  (2026-10-27)
+ * Bump VERSIONV3 + the CHANGELOG below on every change; runAllV3 logs the version.
  * ============================================================================
  *
  * ONE project, ONE lock, ONE cascade. Replaces:
@@ -12,11 +13,11 @@
  *   1. AutoBuy POC emails   -> bought           (label _POC, unread)
  *   2. Final SUCCESS emails -> bought | filled  (label SUCCESS, unread)
  *   3. Stale A_Today        -> bought           (prior-day A_Today + Step 2 confirmation, every 12h)
+ *   (3a/3b moved to Supabase + S4K_GmailRelay.gs in v3.6.0; kept here as manual one-offs)
+ *   3a. need2Buy confirmed  -> bought           (need2Buy sale + Step 2+ SUCCESS email, 30 min)
+ *   3b. need2Buy passed     -> drop Need2Buy/WaitToBuy + need2Buy + triage once the event is 24h+
+ *                              past (hourly) — the rule Supabase uses to close the N2B row
  *   4. CRM status           -> filled/cancel/ISSUE (Supabase crm_order_status_lookup; see below)
- *   4b. need2Buy 12h+       -> reported to Supabase (inbox_n2b_report): mapped to the event via
- *                              the CRM, EVO/GoTickets/SeatGeek listings pulled by the N2S poller
- *                              (re-pulled every 5 min), subs matched with the N2S cover gates.
- *                              Shown on the Subs screen (doGet web app). No labels change.
  *   5. Sweeps: bought+need2Buy -> drop need2Buy;
  *              filled -> drop need2Buy + triage, read, archive (10 threads/run)
  *   6. Triage refresh
@@ -55,7 +56,7 @@
  *
  * STALE A_TODAY (every 12h)
  *   A_Today sale threads whose sale email is from a prior calendar day: if a
- *   "Order #N | [SUCCESS] [Step 2/8] Order Confirmed" email exists with the same
+ *   "Order #N | [SUCCESS] [Step 2+/8]" email (Order Confirmed, Downloaded Invoice, ...) exists with the same
  *   Site Order#, mark bought (drops A_Today + need2Buy) and mark both read.
  *
  * VIP
@@ -77,13 +78,36 @@
  *      must be SET (the CRM step needs only these). testCrmLookupV3('vivid','<site order #>').
  *   4. TEST_MODEV3 = true, run runAllV3() manually, read logs, flip to false.
  *   5. installAllTriggersV3().
- *   6. Subs screen: Deploy > New deployment > Web app, Execute as: Me, Who has access:
- *      Only myself. Open the /exec URL. (doGet must be the only doGet in the project.)
+ *   6. need2Buy subs: add Terminal-2's scripts/apps_script/n2b_sync.gs to this project as a
+ *      second file (same Script Properties) and run installN2bSyncTrigger(). Subs show on
+ *      the Terminal SUBS page.
  *   TickPick API: set TICKPICK_USERNAME + TICKPICK_PASSWORD; tokens are then fetched and
  *   renewed automatically (testTickPickAuthV3). A pasted TICKPICK_API_TOKEN expires ~14 days.
  *   Project time zone must be America/New_York (stale A_Today uses local midnight).
+ *
+ * CHANGELOG
+ *   3.6.0  2026-10-27  need2Buy confirmed (3a) and need2Buy passed (3b) leave the cascade:
+ *                      Supabase decides them now and S4K_GmailRelay.gs applies the labels
+ *                      every minute. Both functions stay as manual one-offs.
+ *   3.5.2  2026-10-27  Gmail quota: need2Buy confirmed caches each sale's Order # / Site
+ *                      Order # and finds Step 2+ SUCCESS emails in batched searches (20 per
+ *                      search) instead of one search per thread; cadence 15 -> 30 min.
+ *   3.5.1  2026-10-27  need2Buy confirmed / stale A_Today accept any "[SUCCESS] [Step k/x]"
+ *                      email with k >= 2 (e.g. Step 3 Downloaded Invoice), not only Step 2.
+ *   3.5.0  2026-10-27  need2Buy confirmed: a need2Buy sale whose "[SUCCESS] [Step 2/x] Order
+ *                      Confirmed" email exists (same Order # + Site Order #) -> bought,
+ *                      dropping Need2Buy/WaitToBuy. Any age, not just stale A_Today.
+ *   3.4.0  2026-10-26  Bought / filled / cancelled also drop Need2Buy/WaitToBuy, so the
+ *                      PED row in Supabase closes (sweeps search both need2Buy labels).
+ *   3.3.0  2026-10-26  need2Buy passed: drop the need2Buy labels once the event is 24h+ past.
+ *   3.2.0  2026-10-26  need2Buy subs board retired; Terminal-2's n2b_sync.gs feeds the SUBS page.
+ *   3.1.0  2026-10-26  CRM status lookup (crm_order_status_lookup) replaces the marketplace
+ *                      API pollers; TickPick OAuth token auto-renew.
+ *   3.0.0  2026-08     Merged build (Lifecycle.gs + unified checker).
  * ============================================================================
  */
+
+const VERSIONV3 = '3.6.0';
 
 /* ───────────────────────────── SWITCHES ───────────────────────────── */
 
@@ -99,9 +123,10 @@ const CADENCE_MINV3 = {
   vip:        0,     // tag new sales over VIP_THRESHOLDV3 (cheap, only scans new mail)
   autobuy:    0,     // AutoBuy POC emails    (cheap, time-sensitive)
   finalsucc:  0,     // Final SUCCESS emails  (cheap, time-sensitive)
+  n2bconfirm: 30,    // need2Buy sale + Step 2+ SUCCESS email -> bought
   staletoday: 720,   // stale A_Today -> bought via Step 2 confirmation (every 12h)
+  n2bpassed:  60,    // event passed -> drop need2Buy labels (Supabase closes these as 'event passed')
   crm:        30,    // CRM status — one batched RPC; CRM feed itself refreshes every 10 min
-  n2b:        30,    // report need2Buy 12h+ to Supabase -> listing pulls -> Subs screen
   sweep:      0,     // filled cleanup        (cheap)
   triage:     0,     // A_Today/Tomorrow/Soon tagging of new + stale sale threads
   tevo:       120,   // API pollers — manual entry points only (no longer in the cascade)
@@ -130,12 +155,14 @@ const CRM_CHUNKV3            = 200;   // orders per RPC call (server max 500)
 const CRM_CLOSED_IS_FILLEDV3 = true;  // off the CRM open-orders feed => treat as filled
 const CRM_CANCEL_FALLBACKV3  = 'ISSUE/Cancelled'; // for sites whose SITESV3.canceled is null
 
-// need2Buy -> subs board
-const N2B_MIN_HOURSV3   = 12;    // report sale threads still need2Buy this long after the sale
-const N2B_MAX_THREADSV3 = 300;   // per run
-const SUBS_PER_ORDERV3  = 3;     // sub options shown per order on the Subs screen
-
 const TICKPICK_API_BASEV3 = 'https://api.tickpick.com/1.0';
+
+// need2Buy labels (Terminal-2's n2b_sync.gs reads Need2Buy/WaitToBuy). When the event is
+// more than N2B_PASSED_HOURSV3 past — the rule n2b_ingest_from_apps_script uses to close a
+// row as 'event passed' — these are removed so the thread leaves the N2B book.
+const N2B_LABELSV3       = ['Need2Buy/WaitToBuy', 'need2Buy'];
+const N2B_PASSED_HOURSV3 = 24;
+const N2B_PASSED_MAXV3   = 200;
 
 /* ───────────────────────────── LABELSV3 ───────────────────────────── */
 
@@ -194,13 +221,15 @@ const TRIAGEV3 = { soonWindowDays: 5, bufferDays: 0, maxThreads: 500 };
 
 function runAllV3() {
   withScriptLockV3_('runAll', function () {
+    console.log('S4K Order Lifecycle v' + VERSIONV3 + (TEST_MODEV3 ? ' (TEST MODE)' : ''));
     const cascade = [
       ['VIP tagging',      'vip',        _tagVipOrdersV3],
       ['AutoBuy bought',   'autobuy',    _processAutoBuyBoughtV3],
       ['Final SUCCESS',    'finalsucc',  _processFinalSuccessV3],
       ['Stale A_Today',    'staletoday', _processStaleTodayV3],
+      // need2Buy confirmed / passed moved to Supabase (S4K_GmailRelay.gs, v3.6.0);
+      // _processNeed2BuyConfirmedV3 / _clearPassedNeed2BuyV3 stay as manual one-offs.
       ['CRM status',       'crm',        _checkCrmStatusV3],
-      ['need2Buy 12h+',    'n2b',        _reportNeed2BuyV3],
       ['Filled sweep',     'sweep',      _sweepFilledThreadsV3],
       ['Triage refresh',   'triage',     _processTriageRefreshV3],
     ];
@@ -244,8 +273,8 @@ function tagVipOrdersV3()              { withScriptLockV3_('VIP',        _tagVip
 function processAutoBuyBoughtV3()      { withScriptLockV3_('AutoBuy',    _processAutoBuyBoughtV3); }
 function processFinalSuccessV3()       { withScriptLockV3_('FinalSucc',  _processFinalSuccessV3); }
 function processStaleTodayV3()         { withScriptLockV3_('StaleToday', _processStaleTodayV3); }
+function clearPassedNeed2BuyV3()       { withScriptLockV3_('N2BPassed',  _clearPassedNeed2BuyV3); }
 function checkCrmStatusV3()            { withScriptLockV3_('CRM',        _checkCrmStatusV3); }
-function reportNeed2BuyV3()            { withScriptLockV3_('need2Buy',   _reportNeed2BuyV3); }
 function checkTevoOrderStatusV3()      { withScriptLockV3_('TEVO',       _checkTevoV3); }
 function checkVividOrderStatusV3()     { withScriptLockV3_('Vivid',      _checkVividV3); }
 function checkSeatGeekOrderStatusV3()  { withScriptLockV3_('SeatGeek',   _checkSeatGeekV3); }
@@ -428,7 +457,7 @@ function markSgBuyReadV3_(rowingOrder, orderNo) {
 
 /* ═════════════════════════ STALE A_TODAY -> BOUGHT ═════════════════════════ */
 
-/** A_Today sale threads from a prior day: if a "[SUCCESS] [Step 2/8] Order Confirmed"
+/** A_Today sale threads from a prior day: if a "[SUCCESS] [Step 2+/8]" (Order Confirmed, Invoice, ...)
  *  email exists for the same Order # + Site Order #, mark bought (drops A_Today +
  *  need2Buy, marks sale read) and mark the confirmation read. Otherwise leave alone. */
 function _processStaleTodayV3() {
@@ -470,11 +499,13 @@ function _processStaleTodayV3() {
   console.log('Stale A_Today summary: ' + JSON.stringify(stats));
 }
 
-/** Returns the thread holding "Order #N | [SUCCESS] [Step 2/x] Order Confirmed ..."
- *  whose body has "Site Order#: <siteOrder>", or null. */
+/** Returns the thread holding an "Order #N | [SUCCESS] [Step k/x] ..." email for
+ *  any step k >= 2 (Step 2 Order Confirmed, Step 3 Downloaded Invoice, ...) whose
+ *  body has "Site Order#: <siteOrder>", or null. Step 2+ succeeding means the
+ *  order was bought and accepted (Step 1 is the purchase itself). */
 function findOrderConfirmedV3_(orderNo, siteOrder) {
-  const threads = GmailApp.search('"' + siteOrder + '" subject:"Order Confirmed"', 0, 10);
-  const subjRe = new RegExp('Order #' + orderNo + '\\b.*\\[SUCCESS\\]\\s*\\[Step 2/\\d+\\]\\s*Order Confirmed', 'i');
+  const threads = GmailApp.search('"' + siteOrder + '" subject:SUCCESS subject:Step', 0, 10);
+  const subjRe = new RegExp('Order #' + orderNo + '\\b.*\\[SUCCESS\\]\\s*\\[Step [2-8]/\\d+\\]', 'i');
   const siteRe = new RegExp('Site Order#:\\s*' + escapeRegexV3_(siteOrder) + '(?![A-Za-z0-9])', 'i');
   for (let i = 0; i < threads.length; i++) {
     const hit = threads[i].getMessages().some(function (m) {
@@ -487,12 +518,170 @@ function findOrderConfirmedV3_(orderNo, siteOrder) {
 
 function escapeRegexV3_(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
+/* ═════════════════════════ NEED2BUY: STEP 2 CONFIRMED -> BOUGHT ═════════════════════════ */
+
+const N2B_CONFIRM_MAXV3 = 100;   // need2Buy threads checked per run
+
+/** need2Buy sale threads (Need2Buy/WaitToBuy or need2Buy, not yet bought): if a
+ *  "Order #N | [SUCCESS] [Step k/x]" email (k >= 2) exists for the same
+ *  Order # + Site Order #, mark bought (adds `bought`, drops the need2Buy labels,
+ *  so the PED row in Supabase closes) and mark the confirmation read. Same rule
+ *  as stale A_Today, but for need2Buy sales of any age. */
+function _processNeed2BuyConfirmedV3() {
+  const threads = GmailApp.search(
+    need2BuySearchV3_() + ' -label:' + LABELSV3.bought + ' subject:"PEDDLING SALE RECEIVED"',
+    0, N2B_CONFIRM_MAXV3);
+  console.log('need2Buy confirmed: ' + threads.length + ' open need2Buy thread(s)');
+  const stats = { noIds: 0, noConfirm: 0, bought: 0, failed: 0 };
+  if (!threads.length) return;
+
+  // Order # + Site Order # per thread, cached: a sale email never changes, and
+  // re-reading every body each run is what exhausts the daily Gmail quota.
+  const cache = CacheService.getScriptCache();
+  const hits = cache.getAll(threads.map(function (t) { return 'v3n2bc_' + t.getId(); }));
+  const fresh = {};
+  const pending = {};   // orderNo -> { siteOrder, thread }
+  threads.forEach(function (thread) {
+    const ck = 'v3n2bc_' + thread.getId();
+    let ids = null;
+    if (hits[ck]) { try { ids = JSON.parse(hits[ck]); } catch (e) { ids = null; } }
+    if (!ids) {
+      const msg = thread.getMessages().filter(function (m) { return /PEDDLING SALE RECEIVED/i.test(m.getSubject()); })[0]
+               || thread.getMessages()[0];
+      const o = msg.getSubject().match(/PEDDLING SALE RECEIVED\s+(\d+)/i);
+      const s = msg.getPlainBody().match(/Site Order\s*#\s*([A-Za-z0-9\-]+)/i);
+      ids = (o && s) ? { o: o[1], s: s[1].trim() } : { o: null };
+      fresh[ck] = JSON.stringify(ids);
+    }
+    if (!ids.o) { stats.noIds++; return; }
+    if (!pending[ids.o]) pending[ids.o] = { siteOrder: ids.s, thread: thread };
+  });
+  if (Object.keys(fresh).length) cache.putAll(fresh, 21600);
+
+  // One search per batch of site order #s, instead of one per thread.
+  const confirmed = findStepSuccessBatchV3_(pending);
+
+  Object.keys(pending).forEach(function (orderNo) {
+    const p = pending[orderNo];
+    const confirm = confirmed[orderNo];
+    if (!confirm) { stats.noConfirm++; return; }
+
+    let sales = findSaleThreadsV3_(orderNo);   // catches split "Re:" threads too
+    if (!sales.length) sales = [p.thread];
+
+    if (TEST_MODEV3) { console.log('🧪 need2Buy ' + orderNo + ' (' + p.siteOrder + '): Step 2+ SUCCESS, would mark BOUGHT on ' + sales.length + ' thread(s)'); return; }
+    if (sales.every(markBoughtV3_)) {
+      confirm.markRead();
+      stats.bought++;
+      console.log('✅ need2Buy ' + orderNo + ' (' + p.siteOrder + '): Step 2+ SUCCESS -> bought');
+    } else stats.failed++;
+  });
+  console.log('need2Buy confirmed summary: ' + JSON.stringify(stats));
+}
+
+/** For { orderNo: { siteOrder } }, find "Order #N | [SUCCESS] [Step k/x]" emails
+ *  (k >= 2) whose body has the matching Site Order#. Searches in batches of 20
+ *  site order #s. Returns { orderNo: thread }. */
+function findStepSuccessBatchV3_(pending) {
+  const out = {};
+  const orders = Object.keys(pending);
+  const subjRe = /Order #(\d+)\b.*\[SUCCESS\]\s*\[Step [2-8]\/\d+\]/i;
+  for (let i = 0; i < orders.length; i += 20) {
+    const chunk = orders.slice(i, i + 20);
+    const q = 'subject:SUCCESS subject:Step (' +
+      chunk.map(function (o) { return '"' + pending[o].siteOrder + '"'; }).join(' OR ') + ')';
+    GmailApp.search(q, 0, 100).forEach(function (t) {
+      t.getMessages().forEach(function (m) {
+        const hit = m.getSubject().match(subjRe);
+        if (!hit || out[hit[1]] || !pending[hit[1]]) return;
+        const siteRe = new RegExp('Site Order#:\\s*' + escapeRegexV3_(pending[hit[1]].siteOrder) + '(?![A-Za-z0-9])', 'i');
+        if (siteRe.test(m.getPlainBody())) out[hit[1]] = t;
+      });
+    });
+  }
+  return out;
+}
+
+/* ═════════════════════════ NEED2BUY: EVENT PASSED -> DROP LABEL ═════════════════════════ */
+
+/** Sale threads still carrying a need2Buy label whose event started more than
+ *  N2B_PASSED_HOURSV3 ago lose the need2Buy labels (and triage). Same rule Supabase uses to
+ *  close an N2B row as 'event passed', so the Gmail book and the Terminal SUBS page agree.
+ *  Nothing else on the thread changes (not marked read, not archived). */
+function _clearPassedNeed2BuyV3() {
+  const cutoffMs = Date.now() - N2B_PASSED_HOURSV3 * 3600000;
+  const q = need2BuySearchV3_() +
+            ' subject:"PEDDLING SALE RECEIVED" before:' + Math.floor(cutoffMs / 1000);
+  const stats = { scanned: 0, cleared: 0, upcoming: 0, noDate: 0 };
+  let start = 0, batch;
+  do {
+    batch = GmailApp.search(q, start, 100);
+    batch.forEach(function (thread) {
+      stats.scanned++;
+      const evMs = eventStartMsForThreadV3_(thread);
+      if (!evMs) { stats.noDate++; return; }
+      if (evMs >= cutoffMs) { stats.upcoming++; return; }
+      const when = Utilities.formatDate(new Date(evMs), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+      if (TEST_MODEV3) { console.log('🧪 need2Buy passed: would drop labels on "' + thread_subjectV3_(thread) + '" (event ' + when + ')'); return; }
+      const removed = dropNeed2BuyV3_(thread);
+      removeTriageLabelsV3_(thread);
+      if (removed.length) { stats.cleared++; console.log('🧹 event ' + when + ' passed: removed ' + removed.join(', ') + ' from "' + thread_subjectV3_(thread) + '"'); }
+    });
+    start += batch.length;
+  } while (batch.length === 100 && start < N2B_PASSED_MAXV3);
+  console.log('need2Buy passed summary: ' + JSON.stringify(stats));
+}
+
+/** Event start from the sale email ("Event Date 8/6/2026 1:20 PM"), read in the script's
+ *  time zone (America/New_York) as Supabase does. Cached per thread for 6h. */
+function eventStartMsForThreadV3_(thread) {
+  const cache = CacheService.getScriptCache();
+  const ck = 'v3evt_' + thread.getId();
+  const hit = cache.get(ck);
+  if (hit !== null) return hit === '' ? null : Number(hit);
+  const msg = thread.getMessages().filter(function (m) { return /PEDDLING SALE RECEIVED/i.test(m.getSubject()); })[0]
+           || thread.getMessages()[0];
+  const t = msg.getPlainBody().replace(/[|\t\r\n]+/g, ' ');
+  const m = t.match(/Event Date\s+(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})\s*([AP]M))?/i);
+  let ms = null;
+  if (m) {
+    let h = m[4] ? parseInt(m[4], 10) % 12 : 0;
+    if (m[6] && /PM/i.test(m[6])) h += 12;
+    ms = new Date(parseInt(m[3], 10), parseInt(m[1], 10) - 1, parseInt(m[2], 10), h, m[5] ? parseInt(m[5], 10) : 0).getTime();
+  }
+  cache.put(ck, ms === null ? '' : String(ms), 21600);
+  return ms;
+}
+
+/** Drop every need2Buy label (need2Buy and Need2Buy/WaitToBuy). Removing WaitToBuy is what
+ *  closes a PED order in Supabase (n2b_sync stops sending it), so bought / filled /
+ *  cancelled / event-passed all go through here. */
+function dropNeed2BuyV3_(thread) { return removeLabelsCIV3_(thread, N2B_LABELSV3); }
+
+/** Gmail search clause matching any need2Buy label. Gmail spells a nested label with '-':
+ *  Need2Buy/WaitToBuy -> need2buy-waittobuy (as n2b_sync.gs does). */
+function need2BuySearchV3_() {
+  return '(' + N2B_LABELSV3.map(function (l) { return 'label:' + l.toLowerCase().replace(/[\/ ]/g, '-'); }).join(' OR ') + ')';
+}
+
+/** Remove labels by name, case-insensitively, straight off the thread's own labels. */
+function removeLabelsCIV3_(thread, names) {
+  const want = names.map(function (n) { return n.toLowerCase(); });
+  const removed = [];
+  thread.getLabels().forEach(function (l) {
+    if (want.indexOf(l.getName().toLowerCase()) === -1) return;
+    try { thread.removeLabel(l); removed.push(l.getName()); }
+    catch (e) { console.log('removeLabel("' + l.getName() + '") failed: ' + e.message); }
+  });
+  return removed;
+}
+
 /* ═════════════════════════ TRANSITIONS (single definitions) ═════════════════════════ */
 
 /** bought: add `bought`, drop `need2Buy`, strip triage, mark read. Stays in inbox. */
 function markBoughtV3_(thread) {
   if (!applyLabelV3_(thread, LABELSV3.bought)) return false;
-  removeLabelV3_(thread, LABELSV3.need2buy);
+  dropNeed2BuyV3_(thread);
   removeTriageLabelsV3_(thread);
   thread.markRead();
   return true;
@@ -501,7 +690,7 @@ function markBoughtV3_(thread) {
 /** filled: add site filled label; only if verified, drop need2Buy + triage, mark read, archive. `bought` untouched. */
 function markFilledV3_(thread, filledLabel) {
   if (!applyLabelV3_(thread, filledLabel)) return false;
-  removeLabelV3_(thread, LABELSV3.need2buy);
+  dropNeed2BuyV3_(thread);
   removeTriageLabelsV3_(thread);
   thread.markRead();
   thread.moveToArchive();
@@ -599,7 +788,7 @@ function applyCrmVerdictV3_(it, r, stats) {
       const lbl = cancelLabelForV3_(cfg);
       if (TEST_MODEV3) { console.log('🧪 ' + tag + ': would CANCEL -> ' + lbl + detail); return; }
       if (applyLabelV3_(thread, lbl)) {
-        removeLabelV3_(thread, LABELSV3.need2buy);   // nothing left to buy
+        dropNeed2BuyV3_(thread);   // nothing left to buy
         removeTriageLabelsV3_(thread);
         thread.markRead(); stats.cancelled++;
         console.log('🚨 ' + tag + ' cancelled (' + (r.market_status || r.crm_status) + ')' + detail);
@@ -711,142 +900,6 @@ function testCrmLookupV3(site, id) {
       (x.crm_status ? ' (' + x.crm_status + ')' : '') + crmDetailV3_(x) +
       ' | ' + String(orders[i].subject).substring(0, 70));
   });
-}
-
-/* ═════════════════════════ NEED2BUY 12H+ -> SUBS ═════════════════════════ */
-
-/** Sale threads still need2Buy N2B_MIN_HOURSV3+ after the sale are reported to Supabase
- *  (inbox_n2b_report). Supabase maps each to its TEVO event via the CRM, pulls EVO /
- *  GoTickets / SeatGeek listings through the N2S poller (and re-pulls every 5 min while
- *  the order keeps being reported), and matches subs with the N2S cover gates. The
- *  Subs screen (doGet) shows the result. Gmail labels are not touched here. */
-function _reportNeed2BuyV3() {
-  const props = PropertiesService.getScriptProperties();
-  const sbUrl  = (props.getProperty('SUPABASE_PROJECT_URL')    || '').trim();
-  const sbAnon = (props.getProperty('SUPABASE_ANON_KEY')       || '').trim();
-  const secret = (props.getProperty('APPSCRIPT_INGEST_SECRET') || '').trim();
-  if (!sbUrl || !sbAnon || !secret) { console.log('need2Buy: missing Supabase properties, skipping.'); return; }
-
-  const cutoffMs = Date.now() - N2B_MIN_HOURSV3 * 3600000;
-  let q = 'label:"' + LABELSV3.need2buy + '" -label:"' + LABELSV3.bought + '" -label:"' + LABELSV3.filledParent + '"';
-  Object.keys(SITESV3).forEach(function (k) { q += ' -label:"' + SITESV3[k].filled + '"'; });
-  q += ' subject:"PEDDLING SALE RECEIVED" label:inbox before:' + Math.floor(cutoffMs / 1000);
-
-  const siteByLabel = {};
-  Object.keys(SITESV3).forEach(function (k) { siteByLabel[SITESV3[k].siteLabel.toLowerCase()] = k; });
-
-  const orders = [];
-  let noSite = 0, noId = 0, tooNew = 0, start = 0, batch;
-  do {
-    batch = GmailApp.search(q, start, 100);
-    batch.forEach(function (thread) {
-      let site = null;
-      thread.getLabels().some(function (l) { site = siteByLabel[l.getName().toLowerCase()] || null; return !!site; });
-      // No marketplace label: Supabase finds the marketplace from the order # in the CRM.
-      if (!site) { site = 'auto'; noSite++; }
-      const so = siteOrderForThreadV3_(thread, site);
-      if (!so) { noId++; return; }
-      if (so.at && so.at > cutoffMs) { tooNew++; return; }
-      const subject = thread_subjectV3_(thread);
-      const on = subject.match(/PEDDLING SALE RECEIVED\s+(\d+)/i);
-      const total = parseSaleTotalV3_(subject, '');
-      orders.push({ site: site, id: so.id, order_no: on ? on[1] : null, thread_id: thread.getId(),
-        subject: subject, total: total === null ? null : String(total), sale_at_ms: so.at || null });
-    });
-    start += batch.length;
-  } while (batch.length === 100 && start < N2B_MAX_THREADSV3);
-
-  console.log('need2Buy ' + N2B_MIN_HOURSV3 + 'h+: ' + orders.length + ' order(s)' +
-    (noSite ? ' (' + noSite + ' with no site label, matched by order # in the CRM)' : '') +
-    (noId ? ', ' + noId + ' without Site Order #' : '') +
-    (tooNew ? ', ' + tooNew + ' newer than cutoff' : ''));
-  if (!orders.length) return;
-  if (TEST_MODEV3) { console.log('🧪 need2Buy: would report ' + orders.length + ' order(s) to Supabase.'); return; }
-
-  let mapped = 0, unmapped = [];
-  for (let i = 0; i < orders.length; i += CRM_CHUNKV3) {
-    const r = sbRpcV3_(sbUrl, sbAnon, 'inbox_n2b_report',
-      { p_orders: orders.slice(i, i + CRM_CHUNKV3), p_shared_secret: secret });
-    (r.orders || []).forEach(function (o) {
-      if (o.tevo_event_id) mapped++; else unmapped.push((o.source || o.site) + ' ' + o.id);
-    });
-    if (r.pull) console.log('need2Buy pulls: ' + JSON.stringify(r.pull));
-  }
-  console.log('need2Buy: ' + mapped + ' mapped to an event' +
-    (unmapped.length ? ', ' + unmapped.length + ' unmapped: ' + unmapped.slice(0, 20).join(', ') : ''));
-}
-
-/* ── Subs screen: deploy this project as a web app (Execute as: me, Access: only myself) ── */
-
-function doGet() {
-  return HtmlService.createHtmlOutput(subsPageHtmlV3_())
-    .setTitle('S4K Subs')
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
-}
-
-/** Called from the Subs page. refresh=true re-reports need2Buy first (also re-pulls). */
-function getSubsBoardV3(refresh) {
-  if (refresh) reportNeed2BuyV3();
-  const props = PropertiesService.getScriptProperties();
-  return sbRpcV3_((props.getProperty('SUPABASE_PROJECT_URL') || '').trim(),
-    (props.getProperty('SUPABASE_ANON_KEY') || '').trim(), 'inbox_n2b_board',
-    { p_shared_secret: (props.getProperty('APPSCRIPT_INGEST_SECRET') || '').trim(), p_per_order: SUBS_PER_ORDERV3 });
-}
-
-function subsPageHtmlV3_() {
-  return [
-'<!doctype html><html><head><meta charset="utf-8"><title>S4K Subs</title>',
-'<style>',
-':root{--bg:#0b0d0d;--bg1:#121515;--bg2:#1a1e1e;--bd:#262b2b;--tx:#c9d2d2;--tx2:#7a8585;--amber:#f5a623;--green:#3dd68c;--red:#e05252;--blue:#4da3f5}',
-'*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:13px/1.4 "IBM Plex Mono",ui-monospace,Menlo,monospace}',
-'header{position:sticky;top:0;z-index:2;background:var(--bg1);border-bottom:1px solid var(--bd);padding:10px 16px;display:flex;flex-wrap:wrap;gap:12px;align-items:center}',
-'h1{font-size:14px;margin:0;color:var(--amber);letter-spacing:.12em}.stat{color:var(--tx2)}.stat b{color:var(--tx)}',
-'button,input{font:inherit;background:var(--bg2);color:var(--tx);border:1px solid var(--bd);border-radius:3px;padding:4px 10px}button{cursor:pointer}button:hover{border-color:var(--amber)}',
-'label{color:var(--tx2);display:flex;gap:6px;align-items:center}main{padding:12px 16px;display:grid;gap:10px}',
-'.card{background:var(--bg1);border:1px solid var(--bd);border-radius:4px;padding:10px 12px;min-width:0}',
-'.top{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline}.ev{font-weight:600}.muted{color:var(--tx2)}.amber{color:var(--amber)}',
-'.pill{font-size:11px;padding:1px 6px;border-radius:3px;background:var(--bg2);border:1px solid var(--bd);color:var(--tx2)}',
-'.pill.ok{color:var(--green);border-color:#1f5a3c}.pill.bad{color:var(--red);border-color:#5a1f1f}',
-'table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}th,td{text-align:left;padding:4px 6px;border-top:1px solid var(--bd);white-space:nowrap}th{color:var(--tx2);font-weight:400}',
-'td.num{text-align:right}.profit{color:var(--green)}.loss{color:var(--red)}a{color:var(--blue)}',
-'.wrap{overflow-x:auto}.none{color:var(--tx2);margin-top:6px}#err{color:var(--red)}',
-'</style></head><body>',
-'<header><h1>S4K SUBS</h1><span class="stat" id="stats">loading…</span>',
-'<label><input type="checkbox" id="only"> only with subs</label>',
-'<input id="q" placeholder="filter: event, order #, site" size="28">',
-'<button id="refresh" title="Re-scan the inbox for need2Buy 12h+ and re-pull listings">Re-scan + pull</button>',
-'<span class="stat" id="gen"></span><span id="err"></span></header>',
-'<main id="list"></main>',
-'<script>',
-'var DATA=null;',
-'function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}',
-'function money(n){return n==null?"–":"$"+Number(n).toFixed(2);}',
-'function ago(t){if(!t)return null;var m=Math.round((Date.now()-new Date(t).getTime())/60000);return m<60?m+"m":Math.round(m/60)+"h";}',
-'function load(refresh){document.getElementById("err").textContent="";document.getElementById("gen").textContent=refresh?"re-scanning…":"loading…";',
-'  google.script.run.withSuccessHandler(function(d){DATA=d;render();}).withFailureHandler(function(e){document.getElementById("err").textContent=" "+e.message;document.getElementById("gen").textContent="";}).getSubsBoardV3(!!refresh);}',
-'function render(){if(!DATA)return;var only=document.getElementById("only").checked,q=document.getElementById("q").value.toLowerCase();',
-'  var all=DATA.orders||[],withSubs=all.filter(function(o){return o.covers&&o.covers.length;}).length,unm=all.filter(function(o){return !o.tevo_event_id;}).length;',
-'  document.getElementById("stats").innerHTML="<b>"+all.length+"</b> need2Buy 12h+ · <b>"+withSubs+"</b> with subs · <b>"+unm+"</b> unmapped";',
-'  document.getElementById("gen").textContent="updated "+new Date(DATA.generated_at).toLocaleTimeString();',
-'  var html=all.filter(function(o){if(only&&!(o.covers&&o.covers.length))return false;if(!q)return true;',
-'    return [o.event_name,o.order_no,o.site,o.site_order_id,o.venue].join(" ").toLowerCase().indexOf(q)!==-1;}).map(card).join("");',
-'  document.getElementById("list").innerHTML=html||"<div class=\\"card muted\\">Nothing to show.</div>";}',
-'function card(o){var L=o.listings||{},src=["evo","gotickets","seatgeek"].map(function(s){var a=ago(L[s]);return "<span class=\\"pill "+(a?"ok":"")+"\\">"+s+(a?" "+a:" –")+"</span>";}).join(" ");',
-'  var mail=o.thread_id?"<a target=\\"_blank\\" href=\\"https://mail.google.com/mail/u/0/#all/"+esc(o.thread_id)+"\\">#"+esc(o.order_no||"")+"</a>":"#"+esc(o.order_no||"");',
-'  var head="<div class=\\"top\\"><span class=\\"ev\\">"+esc(o.event_name||o.subject||"(unmapped)")+"</span><span class=\\"muted\\">"+esc(o.event_date||"")+" "+esc(o.venue||"")+"</span></div>"+',
-'    "<div class=\\"top\\">"+mail+"<span>"+esc(o.site==="auto"?(o.source||"?"):o.site)+" "+esc(o.site_order_id)+"</span><span>sec <b>"+esc(o.section||"?")+"</b> row <b>"+esc(o.row||"?")+"</b> × "+esc(o.quantity||"?")+"</span>"+',
-'    "<span>sold "+money(o.sold_ea)+" ea <span class=\\"muted\\">("+esc(o.price_basis||"no price")+")</span></span><span class=\\"amber\\">"+esc(o.hours_waiting)+"h waiting</span>"+',
-'    (o.tevo_event_id?src:"<span class=\\"pill bad\\">no event mapping</span>")+"</div>";',
-'  var c=o.covers||[];if(!c.length)return "<div class=\\"card\\">"+head+"<div class=\\"none\\">"+(o.tevo_event_id?"No sub found yet in pulled listings.":"Can\'t pull listings until the order maps to an event.")+"</div></div>";',
-'  var rows=c.map(function(s){var p=s.cover_cost==null?null:-s.cover_cost;return "<tr><td>"+esc(s.source)+"</td><td>"+esc(s.section)+"</td><td>"+esc(s.row)+"</td><td class=\\"num\\">"+esc(s.qty)+(s.avail&&s.avail!==s.qty?" <span class=\\"muted\\">/"+esc(s.avail)+"</span>":"")+"</td>"+',
-'    "<td class=\\"num\\">"+money(s.ea)+"</td><td class=\\"num\\">"+money(s.total)+"</td><td class=\\"num "+(p==null?"":(p>=0?"profit":"loss"))+"\\">"+(p==null?"–":(p>=0?"+":"")+money(p).replace("$-","-$"))+"</td>"+',
-'    "<td>"+esc(s.label)+"</td><td class=\\"muted\\">"+esc(ago(s.captured_at)||"")+"</td><td>"+(s.url?"<a target=\\"_blank\\" href=\\""+esc(s.url)+"\\">open</a>":"")+"</td></tr>";}).join("");',
-'  return "<div class=\\"card\\">"+head+"<div class=\\"wrap\\"><table><tr><th>src</th><th>sec</th><th>row</th><th>qty</th><th>ea</th><th>landed</th><th>profit</th><th>gate</th><th>age</th><th></th></tr>"+rows+"</table></div></div>";}',
-'document.getElementById("only").onchange=render;document.getElementById("q").oninput=render;',
-'document.getElementById("refresh").onclick=function(){load(true);};',
-'load(false);setInterval(function(){load(false);},60000);',
-'</script></body></html>'
-  ].join('\n');
 }
 
 /* ═════════════════════════ API POLLERS (manual entry points only) ═════════════════════════ */
@@ -1122,13 +1175,13 @@ function _sweepFilledThreadsV3() {
 /** Any thread carrying BOTH bought and need2Buy (e.g. a "Re:" reply that landed
  *  as its own thread, or a manual label) loses need2Buy + triage. bought stays. */
 function _sweepBoughtThreadsV3() {
-  const q = 'label:"' + LABELSV3.bought + '" label:"' + LABELSV3.need2buy + '"';
+  const q = 'label:"' + LABELSV3.bought + '" ' + need2BuySearchV3_();
   const threads = GmailApp.search(q, 0, 100);
   if (!threads.length) { console.log('Bought sweep: nothing to clean.'); return; }
   console.log('Bought sweep: ' + threads.length + ' thread(s) still need2Buy.');
   threads.forEach(function (thread) {
     if (TEST_MODEV3) { console.log('🧪 Bought sweep: would clean "' + thread_subjectV3_(thread) + '"'); return; }
-    removeLabelV3_(thread, LABELSV3.need2buy);
+    dropNeed2BuyV3_(thread);
     removeTriageLabelsV3_(thread);
   });
 }
@@ -1140,14 +1193,14 @@ function _sweepFilledOnlyV3() {
   const filled = [LABELSV3.filledParent];
   Object.keys(SITESV3).forEach(function (k) { if (filled.indexOf(SITESV3[k].filled) === -1) filled.push(SITESV3[k].filled); });
   const filledClause = filled.map(function (l) { return 'label:"' + l + '"'; }).join(' OR ');
-  const needsClause  = 'is:unread OR label:"' + LABELSV3.need2buy + '" OR ' +
+  const needsClause  = 'is:unread OR ' + need2BuySearchV3_() + ' OR ' +
     LABELSV3.triage.map(function (l) { return 'label:"' + l + '"'; }).join(' OR ');
   const threads = GmailApp.search('(' + filledClause + ') (' + needsClause + ')', 0, SWEEP_MAX_PER_RUNV3);
   if (!threads.length) { console.log('Sweep: nothing to clean.'); return; }
   console.log('Sweep: ' + threads.length + ' thread(s).');
   threads.forEach(function (thread) {
     if (TEST_MODEV3) { console.log('🧪 Sweep: would clean "' + thread_subjectV3_(thread) + '"'); return; }
-    removeLabelV3_(thread, LABELSV3.need2buy);
+    dropNeed2BuyV3_(thread);
     removeTriageLabelsV3_(thread);
     thread.markRead();
     if (SWEEP_ARCHIVEV3) thread.moveToArchive();
