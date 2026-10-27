@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * S4K GMAIL RELAY  v1.0.0  (2026-10-27)
+ * S4K GMAIL RELAY  v1.0.1  (2026-10-27)
  * Bump RELAY_VERSION + the CHANGELOG below on every change.
  * ============================================================================
  *
@@ -30,11 +30,12 @@
  * syncN2bToSupabase trigger, which this replaces.
  *
  * CHANGELOG
+ *   1.0.1  2026-10-27  Sends each email's From header; Supabase trusts only orders@s4kent.com.
  *   1.0.0  2026-10-27  First version: N2B book + bought / event-passed decisions in Supabase.
  * ============================================================================
  */
 
-const RELAY_VERSION = '1.0.0';
+const RELAY_VERSION = '1.0.1';
 
 const RELAY = {
   // the Need2Buy book: any need2Buy label, on a sale thread
@@ -128,13 +129,18 @@ function relayGetThread_(tid) {
 
 function relayShape_(m) {
   const headers = (m.payload && m.payload.headers) || [];
-  const subj = (headers.filter(function (h) { return /^subject$/i.test(h.name); })[0] || {}).value || '';
+  const header = function (n) {
+    return (headers.filter(function (h) { return h.name.toLowerCase() === n; })[0] || {}).value || '';
+  };
+  const subj = header('subject');
   const names = relayLabels_().byId;
   return {
     id: m.id,
     thread_id: m.threadId,
     internal_ms: m.internalDate,
     subject: subj,
+    // Supabase trusts only orders@s4kent.com for sale / step / cancel emails
+    from: header('from'),
     body: relayBody_(m.payload).slice(0, RELAY.BODY_MAX),
     labels: (m.labelIds || []).map(function (id) { return names[id] || id; }),
   };
