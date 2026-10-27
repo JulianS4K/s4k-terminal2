@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * S4K ORDER LIFECYCLE + STATUS CHECKER  v3.5.0  (2026-10-27)
+ * S4K ORDER LIFECYCLE + STATUS CHECKER  v3.5.1  (2026-10-27)
  * Bump VERSIONV3 + the CHANGELOG below on every change; runAllV3 logs the version.
  * ============================================================================
  *
@@ -55,7 +55,7 @@
  *
  * STALE A_TODAY (every 12h)
  *   A_Today sale threads whose sale email is from a prior calendar day: if a
- *   "Order #N | [SUCCESS] [Step 2/8] Order Confirmed" email exists with the same
+ *   "Order #N | [SUCCESS] [Step 2+/8]" email (Order Confirmed, Downloaded Invoice, ...) exists with the same
  *   Site Order#, mark bought (drops A_Today + need2Buy) and mark both read.
  *
  * VIP
@@ -85,6 +85,8 @@
  *   Project time zone must be America/New_York (stale A_Today uses local midnight).
  *
  * CHANGELOG
+ *   3.5.1  2026-10-27  need2Buy confirmed / stale A_Today accept any "[SUCCESS] [Step k/x]"
+ *                      email with k >= 2 (e.g. Step 3 Downloaded Invoice), not only Step 2.
  *   3.5.0  2026-10-27  need2Buy confirmed: a need2Buy sale whose "[SUCCESS] [Step 2/x] Order
  *                      Confirmed" email exists (same Order # + Site Order #) -> bought,
  *                      dropping Need2Buy/WaitToBuy. Any age, not just stale A_Today.
@@ -98,7 +100,7 @@
  * ============================================================================
  */
 
-const VERSIONV3 = '3.5.0';
+const VERSIONV3 = '3.5.1';
 
 /* ───────────────────────────── SWITCHES ───────────────────────────── */
 
@@ -448,7 +450,7 @@ function markSgBuyReadV3_(rowingOrder, orderNo) {
 
 /* ═════════════════════════ STALE A_TODAY -> BOUGHT ═════════════════════════ */
 
-/** A_Today sale threads from a prior day: if a "[SUCCESS] [Step 2/8] Order Confirmed"
+/** A_Today sale threads from a prior day: if a "[SUCCESS] [Step 2+/8]" (Order Confirmed, Invoice, ...)
  *  email exists for the same Order # + Site Order #, mark bought (drops A_Today +
  *  need2Buy, marks sale read) and mark the confirmation read. Otherwise leave alone. */
 function _processStaleTodayV3() {
@@ -490,11 +492,13 @@ function _processStaleTodayV3() {
   console.log('Stale A_Today summary: ' + JSON.stringify(stats));
 }
 
-/** Returns the thread holding "Order #N | [SUCCESS] [Step 2/x] Order Confirmed ..."
- *  whose body has "Site Order#: <siteOrder>", or null. */
+/** Returns the thread holding an "Order #N | [SUCCESS] [Step k/x] ..." email for
+ *  any step k >= 2 (Step 2 Order Confirmed, Step 3 Downloaded Invoice, ...) whose
+ *  body has "Site Order#: <siteOrder>", or null. Step 2+ succeeding means the
+ *  order was bought and accepted (Step 1 is the purchase itself). */
 function findOrderConfirmedV3_(orderNo, siteOrder) {
-  const threads = GmailApp.search('"' + siteOrder + '" subject:"Order Confirmed"', 0, 10);
-  const subjRe = new RegExp('Order #' + orderNo + '\\b.*\\[SUCCESS\\]\\s*\\[Step 2/\\d+\\]\\s*Order Confirmed', 'i');
+  const threads = GmailApp.search('"' + siteOrder + '" subject:SUCCESS subject:Step', 0, 10);
+  const subjRe = new RegExp('Order #' + orderNo + '\\b.*\\[SUCCESS\\]\\s*\\[Step [2-8]/\\d+\\]', 'i');
   const siteRe = new RegExp('Site Order#:\\s*' + escapeRegexV3_(siteOrder) + '(?![A-Za-z0-9])', 'i');
   for (let i = 0; i < threads.length; i++) {
     const hit = threads[i].getMessages().some(function (m) {
@@ -512,7 +516,7 @@ function escapeRegexV3_(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\
 const N2B_CONFIRM_MAXV3 = 100;   // need2Buy threads checked per run
 
 /** need2Buy sale threads (Need2Buy/WaitToBuy or need2Buy, not yet bought): if a
- *  "Order #N | [SUCCESS] [Step 2/x] Order Confirmed" email exists for the same
+ *  "Order #N | [SUCCESS] [Step k/x]" email (k >= 2) exists for the same
  *  Order # + Site Order #, mark bought (adds `bought`, drops the need2Buy labels,
  *  so the PED row in Supabase closes) and mark the confirmation read. Same rule
  *  as stale A_Today, but for need2Buy sales of any age. */
