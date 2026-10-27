@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * S4K ORDER LIFECYCLE + STATUS CHECKER  v3.5.1  (2026-10-27)
+ * S4K ORDER LIFECYCLE + STATUS CHECKER  v3.5.2  (2026-10-27)
  * Bump VERSIONV3 + the CHANGELOG below on every change; runAllV3 logs the version.
  * ============================================================================
  *
@@ -13,7 +13,7 @@
  *   1. AutoBuy POC emails   -> bought           (label _POC, unread)
  *   2. Final SUCCESS emails -> bought | filled  (label SUCCESS, unread)
  *   3. Stale A_Today        -> bought           (prior-day A_Today + Step 2 confirmation, every 12h)
- *   3a. need2Buy confirmed  -> bought           (need2Buy sale + Step 2 Order Confirmed email, 15 min)
+ *   3a. need2Buy confirmed  -> bought           (need2Buy sale + Step 2+ SUCCESS email, 30 min)
  *   3b. need2Buy passed     -> drop Need2Buy/WaitToBuy + need2Buy + triage once the event is 24h+
  *                              past (hourly) — the rule Supabase uses to close the N2B row
  *   4. CRM status           -> filled/cancel/ISSUE (Supabase crm_order_status_lookup; see below)
@@ -85,6 +85,9 @@
  *   Project time zone must be America/New_York (stale A_Today uses local midnight).
  *
  * CHANGELOG
+ *   3.5.2  2026-10-27  Gmail quota: need2Buy confirmed caches each sale's Order # / Site
+ *                      Order # and finds Step 2+ SUCCESS emails in batched searches (20 per
+ *                      search) instead of one search per thread; cadence 15 -> 30 min.
  *   3.5.1  2026-10-27  need2Buy confirmed / stale A_Today accept any "[SUCCESS] [Step k/x]"
  *                      email with k >= 2 (e.g. Step 3 Downloaded Invoice), not only Step 2.
  *   3.5.0  2026-10-27  need2Buy confirmed: a need2Buy sale whose "[SUCCESS] [Step 2/x] Order
@@ -100,7 +103,7 @@
  * ============================================================================
  */
 
-const VERSIONV3 = '3.5.1';
+const VERSIONV3 = '3.5.2';
 
 /* ───────────────────────────── SWITCHES ───────────────────────────── */
 
@@ -116,7 +119,7 @@ const CADENCE_MINV3 = {
   vip:        0,     // tag new sales over VIP_THRESHOLDV3 (cheap, only scans new mail)
   autobuy:    0,     // AutoBuy POC emails    (cheap, time-sensitive)
   finalsucc:  0,     // Final SUCCESS emails  (cheap, time-sensitive)
-  n2bconfirm: 15,    // need2Buy sale + Step 2 Order Confirmed -> bought
+  n2bconfirm: 30,    // need2Buy sale + Step 2+ SUCCESS email -> bought
   staletoday: 720,   // stale A_Today -> bought via Step 2 confirmation (every 12h)
   n2bpassed:  60,    // event passed -> drop need2Buy labels (Supabase closes these as 'event passed')
   crm:        30,    // CRM status — one batched RPC; CRM feed itself refreshes every 10 min
@@ -526,33 +529,73 @@ function _processNeed2BuyConfirmedV3() {
     0, N2B_CONFIRM_MAXV3);
   console.log('need2Buy confirmed: ' + threads.length + ' open need2Buy thread(s)');
   const stats = { noIds: 0, noConfirm: 0, bought: 0, failed: 0 };
-  const done = {};
+  if (!threads.length) return;
 
+  // Order # + Site Order # per thread, cached: a sale email never changes, and
+  // re-reading every body each run is what exhausts the daily Gmail quota.
+  const cache = CacheService.getScriptCache();
+  const hits = cache.getAll(threads.map(function (t) { return 'v3n2bc_' + t.getId(); }));
+  const fresh = {};
+  const pending = {};   // orderNo -> { siteOrder, thread }
   threads.forEach(function (thread) {
-    const msg = thread.getMessages().filter(function (m) { return /PEDDLING SALE RECEIVED/i.test(m.getSubject()); })[0]
-             || thread.getMessages()[0];
-    const subject = msg.getSubject();
-    const o = subject.match(/PEDDLING SALE RECEIVED\s+(\d+)/i);
-    const s = msg.getPlainBody().match(/Site Order\s*#\s*([A-Za-z0-9\-]+)/i);
-    if (!o || !s) { stats.noIds++; return; }
-    const orderNo = o[1], siteOrder = s[1].trim();
-    if (done[orderNo]) return;
-    done[orderNo] = true;
+    const ck = 'v3n2bc_' + thread.getId();
+    let ids = null;
+    if (hits[ck]) { try { ids = JSON.parse(hits[ck]); } catch (e) { ids = null; } }
+    if (!ids) {
+      const msg = thread.getMessages().filter(function (m) { return /PEDDLING SALE RECEIVED/i.test(m.getSubject()); })[0]
+               || thread.getMessages()[0];
+      const o = msg.getSubject().match(/PEDDLING SALE RECEIVED\s+(\d+)/i);
+      const s = msg.getPlainBody().match(/Site Order\s*#\s*([A-Za-z0-9\-]+)/i);
+      ids = (o && s) ? { o: o[1], s: s[1].trim() } : { o: null };
+      fresh[ck] = JSON.stringify(ids);
+    }
+    if (!ids.o) { stats.noIds++; return; }
+    if (!pending[ids.o]) pending[ids.o] = { siteOrder: ids.s, thread: thread };
+  });
+  if (Object.keys(fresh).length) cache.putAll(fresh, 21600);
 
-    const confirm = findOrderConfirmedV3_(orderNo, siteOrder);
+  // One search per batch of site order #s, instead of one per thread.
+  const confirmed = findStepSuccessBatchV3_(pending);
+
+  Object.keys(pending).forEach(function (orderNo) {
+    const p = pending[orderNo];
+    const confirm = confirmed[orderNo];
     if (!confirm) { stats.noConfirm++; return; }
 
     let sales = findSaleThreadsV3_(orderNo);   // catches split "Re:" threads too
-    if (!sales.length) sales = [thread];
+    if (!sales.length) sales = [p.thread];
 
-    if (TEST_MODEV3) { console.log('🧪 need2Buy ' + orderNo + ' (' + siteOrder + '): Step 2 confirmed, would mark BOUGHT on ' + sales.length + ' thread(s)'); return; }
+    if (TEST_MODEV3) { console.log('🧪 need2Buy ' + orderNo + ' (' + p.siteOrder + '): Step 2+ SUCCESS, would mark BOUGHT on ' + sales.length + ' thread(s)'); return; }
     if (sales.every(markBoughtV3_)) {
       confirm.markRead();
       stats.bought++;
-      console.log('✅ need2Buy ' + orderNo + ' (' + siteOrder + '): Step 2 confirmed -> bought');
+      console.log('✅ need2Buy ' + orderNo + ' (' + p.siteOrder + '): Step 2+ SUCCESS -> bought');
     } else stats.failed++;
   });
   console.log('need2Buy confirmed summary: ' + JSON.stringify(stats));
+}
+
+/** For { orderNo: { siteOrder } }, find "Order #N | [SUCCESS] [Step k/x]" emails
+ *  (k >= 2) whose body has the matching Site Order#. Searches in batches of 20
+ *  site order #s. Returns { orderNo: thread }. */
+function findStepSuccessBatchV3_(pending) {
+  const out = {};
+  const orders = Object.keys(pending);
+  const subjRe = /Order #(\d+)\b.*\[SUCCESS\]\s*\[Step [2-8]\/\d+\]/i;
+  for (let i = 0; i < orders.length; i += 20) {
+    const chunk = orders.slice(i, i + 20);
+    const q = 'subject:SUCCESS subject:Step (' +
+      chunk.map(function (o) { return '"' + pending[o].siteOrder + '"'; }).join(' OR ') + ')';
+    GmailApp.search(q, 0, 100).forEach(function (t) {
+      t.getMessages().forEach(function (m) {
+        const hit = m.getSubject().match(subjRe);
+        if (!hit || out[hit[1]] || !pending[hit[1]]) return;
+        const siteRe = new RegExp('Site Order#:\\s*' + escapeRegexV3_(pending[hit[1]].siteOrder) + '(?![A-Za-z0-9])', 'i');
+        if (siteRe.test(m.getPlainBody())) out[hit[1]] = t;
+      });
+    });
+  }
+  return out;
 }
 
 /* ═════════════════════════ NEED2BUY: EVENT PASSED -> DROP LABEL ═════════════════════════ */
